@@ -18,7 +18,7 @@ from django.contrib.auth.models import (
     AbstractBaseUser, PermissionsMixin, BaseUserManager
 )
 from django.db import models
-from shortuuidfield import ShortUUIDField
+import shortuuid
 
 class UserStatusChoice(models.IntegerChoices):
     """
@@ -143,7 +143,13 @@ class OfficeUser(AbstractBaseUser, PermissionsMixin):
     """
     自定义用户模型，继承自AbstractBaseUser和PermissionsMixin
     """
-    uuid = ShortUUIDField(primary_key=True, unique=True, editable=False)
+    uuid = models.CharField(
+        primary_key=True, 
+        unique=True, 
+        editable=False, 
+        max_length=22,  # shortuuid生成的字符串长度为22
+        default=shortuuid.uuid
+    )
     username = models.CharField(
         max_length=150,
         unique=False,
