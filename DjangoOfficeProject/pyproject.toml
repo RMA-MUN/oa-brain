@@ -1,0 +1,23 @@
+[project]
+name = "djangoofficeproject"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.12"
+dependencies = [
+    "celery==5.4.0",
+    "django==5.2.6",
+    "django-cors-headers==4.3.0",
+    "django-redis==5.4.0",
+    "djangorestframework==3.15.2",
+    "djangorestframework-simplejwt==5.3.1",
+    "gevent==23.9.1",
+    "mysqlclient>=2.2.8",
+    "pandas>=3.0.2",
+    "python-dotenv==1.0.0",
+    "redis==5.0.1",
+    "shortuuid>=1.0.13",
+]
+
+[[tool.uv.index]]
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true
