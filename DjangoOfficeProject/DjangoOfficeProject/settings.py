@@ -198,6 +198,13 @@ CORS_ALLOW_ALL_ORIGINS = True
 # 覆盖默认的用户模型
 AUTH_USER_MODEL = 'officeAuth.officeuser'
 
+# JWT配置
+JWT_CONFIG = {
+    'SECRET_KEY': os.environ.get('SECRET_KEY', 'django-insecure-zdhqx2xbs&fd)&s-#&7mu%t%9l#fp8#6)zgvgkl+nu$w+ga6nl'),
+    'ALGORITHM': os.environ.get('ALGORITHM', 'HS256'),
+    'ACCESS_TOKEN_EXPIRE_HOURS': 24,
+}
+
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'apps.officeAuth.authentications.JWTAuthentication',

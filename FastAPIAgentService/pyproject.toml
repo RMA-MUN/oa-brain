@@ -1,0 +1,58 @@
+[project]
+name = "backend"
+version = "0.1.0"
+description = "A FastAPI + LangChain project for LLM applications"
+requires-python = ">=3.12"
+authors = [
+    { name = "RMA-MUN", email = "n3032747608@163.com" }
+]
+dependencies = [
+    "python-dotenv~=1.2.2",
+    "SQLAlchemy~=2.0.48",
+    "langchain-core~=1.2.17",
+    "aiofiles~=25.1.0",
+    "langchain-text-splitters~=1.1.1",
+    "fastapi~=0.123.0",
+    "starlette~=0.50.0",
+    "pydantic-settings~=2.13.1",
+    "langchain-community~=0.4.1",
+    "python-jose~=3.5.0",
+    "PyYAML~=6.0.3",
+    "pydantic[email]~=2.12.5",
+    "requests~=2.32.5",
+    "uvicorn==0.21.1",
+    "aiomysql>=0.3.2",
+    "redis>=7.3.0",
+    "langchain-ollama>=1.0.1",
+    "langchain>=1.2.13",
+    "langchain-chroma>=1.1.0",
+    "python-multipart>=0.0.22",
+    "dashscope>=1.25.14",
+    "pypdf>=6.9.2",
+    "python-magic>=0.4.27",
+    "python-magic-bin>=0.4.14",
+    "sentence-transformers>=5.3.0",
+    "modelscope>=1.35.3",
+    "accelerate>=1.13.0",
+    "torch>=2.11.0",
+    "torchvision>=0.26.0",
+    "torchaudio>=2.11.0",
+    "langchain-dashscope>=0.1.8",
+]
+
+# 开发依赖
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "black>=24.0.0",
+    "isort>=5.12.0",
+    "ruff>=0.3.0",
+]
+
+[[tool.uv.index]]
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true
+
+[tool.uv]
+venv.path = ".venv"
+index-url = "https://pypi.tuna.tsinghua.edu.cn/simple"

@@ -47,8 +47,8 @@ class JWTAuthentication(BaseAuthentication):
         try:
             payload = jwt.decode(
                 token,
-                settings.SECRET_KEY,
-                algorithms=['HS256']
+                settings.JWT_CONFIG['SECRET_KEY'],
+                algorithms=[settings.JWT_CONFIG['ALGORITHM']]
             )
         except ExpiredSignatureError:
             raise AuthenticationFailed('Token已过期，请重新登录')
@@ -107,8 +107,8 @@ class JWTTokenGenerator:
         # 生成Token
         token = jwt.encode(
             payload,
-            settings.SECRET_KEY,
-            algorithm='HS256'
+            settings.JWT_CONFIG['SECRET_KEY'],
+            algorithm=settings.JWT_CONFIG['ALGORITHM']
         )
         
         # 处理Python 3.6+中jwt.encode返回bytes的情况
@@ -128,8 +128,8 @@ class JWTTokenGenerator:
             # 不验证过期时间
             payload = jwt.decode(
                 token,
-                settings.SECRET_KEY,
-                algorithms=['HS256'],
+                settings.JWT_CONFIG['SECRET_KEY'],
+                algorithms=[settings.JWT_CONFIG['ALGORITHM']],
                 options={'verify_exp': False}
             )
             
