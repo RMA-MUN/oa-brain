@@ -2,7 +2,6 @@ from typing import Dict, Any, List
 
 from langchain_classic.agents import create_tool_calling_agent, AgentExecutor
 from langchain_core.tools import BaseTool
-from langchain_community.chat_models import ChatTongyi
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 from app.agent.base import BaseAgent
@@ -38,7 +37,6 @@ class ToolAgent(BaseAgent):
     def __init__(self):
         super().__init__("tool_agent")
         self.tools = self._get_all_tools()
-        self.agent_executor = None
     
     def _get_all_tools(self) -> List[BaseTool]:
         """获取所有可用的工具"""
@@ -73,13 +71,15 @@ class ToolAgent(BaseAgent):
         import os
         api_key = os.getenv("ALIYUN_ACCESS_KEY_SECRET")
         base_url = os.getenv("ALIYUN_BASE_URL")
-        
-        llm = ChatTongyi(
-            model="qwen3-max",
-            api_key=api_key,
-            base_url=base_url,
-            temperature=0.3,
-        )
+
+        try:
+            from langchain_community.chat_models import ChatTongyi
+        except Exception as e:
+            raise RuntimeError(
+                "大模型客户端不可用，请检查 langchain/通义千问 依赖版本或环境配置"
+            ) from e
+
+        llm = ChatTongyi(model="qwen3-max", api_key=api_key, base_url=base_url, temperature=0.3)
         
         # 创建提示词模板
         system_prompt = load_prompt('main_prompt')
@@ -105,19 +105,19 @@ class ToolAgent(BaseAgent):
     async def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """处理输入数据，执行工具调用"""
         try:
-            if not self.agent_executor:
-                self.agent_executor = self._create_agent_executor()
-            
             task_description = input_data.get("task_description", "")
             params = input_data.get("params", {})
             
+            # 每次请求创建全新的 executor，避免跨会话状态污染
+            agent_executor = self._create_agent_executor()
+
             # 构建工具调用输入
             tool_input = task_description
             if params:
                 tool_input += f"\n参数: {params}"
             
             # 执行工具调用
-            result = await self.agent_executor.ainvoke({
+            result = await agent_executor.ainvoke({
                 "input": tool_input,
                 "chat_history": []
             })

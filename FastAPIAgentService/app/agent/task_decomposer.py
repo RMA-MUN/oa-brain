@@ -1,6 +1,5 @@
 from typing import Dict, Any, List
 import os
-from langchain_community.chat_models import ChatTongyi
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 from pydantic import BaseModel, Field
@@ -34,7 +33,7 @@ class TaskDecomposer(BaseAgent):
     
     def __init__(self):
         super().__init__("task_decomposer")
-        self.llm = self._create_llm()
+        self.llm = None
         self.prompt_template = self._create_prompt_template()
         self.parser = JsonOutputParser(pydantic_object=TaskDecompositionResult)
     
@@ -42,7 +41,13 @@ class TaskDecomposer(BaseAgent):
         """创建大模型实例"""
         api_key = os.getenv("ALIYUN_ACCESS_KEY_SECRET")
         base_url = os.getenv("ALIYUN_BASE_URL")
-        
+
+        try:
+            from langchain_community.chat_models import ChatTongyi
+        except Exception as e:  # pragma: no cover
+            logger.error(f"【任务分解】大模型依赖加载失败: {e}", exc_info=True)
+            return None
+
         return ChatTongyi(
             model="qwen3-max",
             api_key=api_key,
@@ -94,6 +99,14 @@ class TaskDecomposer(BaseAgent):
         """处理输入数据，分解任务"""
         try:
             user_input = input_data.get("user_input", "")
+
+            if self.llm is None:
+                self.llm = self._create_llm()
+            if self.llm is None:
+                return {
+                    "success": False,
+                    "error": "大模型客户端不可用，请检查 langchain/通义千问 依赖版本或环境配置"
+                }
             
             # 创建链
             chain = self.prompt_template | self.llm | self.parser

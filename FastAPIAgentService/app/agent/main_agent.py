@@ -118,7 +118,7 @@ class MainAgent(BaseAgent):
     
     async def _execute_subtasks(self, state: AgentState) -> AgentState:
         """执行子任务"""
-        for subtask in state.task_subtasks:
+        for subtask in self._sort_subtasks(state.task_subtasks or []):
             # 检查参数是否完整（尝试从历史会话和用户输入中提取参数）
             if not self._check_params_complete(subtask, state):
                 # 如果参数不完整，已经在_check_params_complete中设置了final_response
@@ -160,8 +160,84 @@ class MainAgent(BaseAgent):
                     }
                     
                     logger.info(f"【主Agent】子任务执行成功: {subtask['task_name']}")
+                else:
+                    logger.error(f"【主Agent】未找到路由到的Agent: {selected_agent_id}")
+                    state.agent_results[subtask.get("task_id", "unknown")] = {
+                        "task": subtask,
+                        "agent": selected_agent_id,
+                        "result": {"success": False, "error": f"未找到Agent: {selected_agent_id}"}
+                    }
+            else:
+                logger.error(f"【主Agent】子任务路由失败: {route_result.get('error')}")
+                state.agent_results[subtask.get("task_id", "unknown")] = {
+                    "task": subtask,
+                    "agent": None,
+                    "result": {"success": False, "error": route_result.get("error", "路由失败")}
+                }
         
         return state
+
+    def _sort_subtasks(self, subtasks: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
+        """
+        按依赖与优先级排序子任务。
+        - **先依赖后执行**：dependencies 满足后才执行
+        - **同层按 priority 升序**
+        若存在依赖缺失/循环依赖，退化为按 priority 升序 + 原顺序，避免整个流程卡死。
+        """
+        if not subtasks:
+            return []
+
+        task_by_id: Dict[str, Dict[str, Any]] = {}
+        for t in subtasks:
+            tid = t.get("task_id")
+            if tid:
+                task_by_id[tid] = t
+
+        # 计算入度
+        indeg: Dict[str, int] = {t.get("task_id"): 0 for t in subtasks if t.get("task_id")}
+        dependents: Dict[str, list[str]] = {tid: [] for tid in indeg.keys()}
+
+        missing_dep = False
+        for t in subtasks:
+            tid = t.get("task_id")
+            if not tid:
+                continue
+            deps = t.get("dependencies") or []
+            for dep in deps:
+                if dep not in indeg:
+                    missing_dep = True
+                    continue
+                indeg[tid] += 1
+                dependents[dep].append(tid)
+
+        def _priority_key(tid: str):
+            t = task_by_id.get(tid, {})
+            pr = t.get("priority")
+            return (pr if isinstance(pr, int) else 9999)
+
+        # Kahn
+        ready = sorted([tid for tid, d in indeg.items() if d == 0], key=_priority_key)
+        ordered_ids: list[str] = []
+        while ready:
+            tid = ready.pop(0)
+            ordered_ids.append(tid)
+            for nxt in dependents.get(tid, []):
+                indeg[nxt] -= 1
+                if indeg[nxt] == 0:
+                    ready.append(nxt)
+                    ready.sort(key=_priority_key)
+
+        # 检查循环依赖/缺失依赖
+        if missing_dep or len(ordered_ids) != len(indeg):
+            logger.warning("【主Agent】检测到依赖缺失或循环依赖，退化为按priority排序执行")
+            return sorted(subtasks, key=lambda t: (t.get("priority", 9999), subtasks.index(t)))
+
+        # 保留没有 task_id 的子任务（放到最后，按 priority）
+        ordered = [task_by_id[tid] for tid in ordered_ids]
+        no_id = [t for t in subtasks if not t.get("task_id")]
+        if no_id:
+            ordered.extend(sorted(no_id, key=lambda t: (t.get("priority", 9999))))
+        return ordered
     
     def _extract_params_from_text(self, text: str, required_params: list[str]) -> Dict[str, str]:
         """
@@ -234,6 +310,9 @@ class MainAgent(BaseAgent):
         required_params = subtask.get("required_params", [])
         if not required_params:
             return True
+
+        # 已有 params（来自任务分解或上游补全）
+        existing_params = subtask.get("params") or {}
         
         # 收集所有可用文本（用户输入 + 历史会话）
         all_text = state.user_input or ""
@@ -250,13 +329,15 @@ class MainAgent(BaseAgent):
         extracted_params = self._extract_params_from_text(all_text, required_params)
         
         # 更新子任务的参数
+        merged_params = dict(existing_params)
         if extracted_params:
-            subtask["params"] = subtask.get("params", {})
-            subtask["params"].update(extracted_params)
+            merged_params.update(extracted_params)
             logger.info(f"【参数提取】从历史和输入中提取到参数: {extracted_params}")
+        if merged_params:
+            subtask["params"] = merged_params
         
         # 检查是否所有参数都已提取到
-        missing_params = [param for param in required_params if param not in extracted_params]
+        missing_params = [param for param in required_params if param not in merged_params]
         
         if missing_params:
             logger.info(f"【参数检查】缺少参数: {missing_params}")

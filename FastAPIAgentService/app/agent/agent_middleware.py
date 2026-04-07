@@ -1,30 +1,37 @@
-from langchain.agents import AgentState
-from langchain.agents.middleware import wrap_tool_call, wrap_model_call, after_model, before_model, after_agent, \
-    before_agent
+from typing import Any, Dict
+
+from langchain.agents.middleware import (
+    wrap_tool_call,
+    wrap_model_call,
+    after_model,
+    before_model,
+    after_agent,
+    before_agent,
+)
 from langgraph.runtime import Runtime
 
 from app.core.logger_handler import logger
 
 
 @before_agent
-def log_before_agent(status: AgentState, runtime: Runtime):
+def log_before_agent(status: Dict[str, Any], runtime: Runtime):
     """agent 运行前执行此函数"""
     logger.info(f"[before_agent] agent启动， 输入：{status['messages']}， 共{len(status['messages'])}条消息")
 
 
 @after_agent
-def log_after_agent(status: AgentState, runtime: Runtime):
+def log_after_agent(status: Dict[str, Any], runtime: Runtime):
     """agent 运行后执行此函数"""
     logger.info(f"[after_agent] agent运行结束， 输出：{status['messages']}， 共{len(status['messages'])}条消息")
 
 @before_model
-def log_before_model(status: AgentState, runtime: Runtime):
+def log_before_model(status: Dict[str, Any], runtime: Runtime):
     """model 运行前执行此函数"""
     logger.info(f"[before_model] model启动， 输入：{status['messages']}， 共{len(status['messages'])}条消息")
 
 
 @after_model
-def log_after_model(status: AgentState, runtime: Runtime):
+def log_after_model(status: Dict[str, Any], runtime: Runtime):
     """model 运行后执行此函数"""
     logger.info(f"[after_model] model运行结束， 输出：{status['messages']}， 共{len(status['messages'])}条消息")
 
