@@ -48,3 +48,16 @@ class ReorderRequest(BaseModel):
 class ReorderResponse(BaseModel):
     """重排序响应模型"""
     documents: List[dict]
+
+
+class ParamExtractionRequest(BaseModel):
+    """参数提取测试请求模型"""
+    user_input: str
+    required_params: List[str]
+
+
+class ParamExtractionResponse(BaseModel):
+    """参数提取测试响应模型"""
+    extracted_params: dict
+    missing_params: List[str]
+    status: str
