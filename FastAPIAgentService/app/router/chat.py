@@ -5,7 +5,7 @@ from fastapi.routing import APIRouter
 from fastapi import UploadFile, File, Depends
 from fastapi.responses import StreamingResponse
 
-from app.agent.agent import get_agent_stream_response, get_main_agent_stream_response
+from app.agent.agent import get_agent_stream_response, get_main_agent_stream_response, get_main_agent_response
 from app.router.chat_service import ChatService, get_router_service
 
 from app.schemas.rag_schemas import QueryRequest, RAGResponse, RAGRequest, SessionResponse, ReorderResponse, ReorderRequest, ParamExtractionRequest, ParamExtractionResponse
@@ -58,8 +58,13 @@ async def main_agent_query_stream(
         }
     )
 
+@chat_router.post("/main-agent/query")
+async def main_agent_query(request: QueryRequest, user_id: str = Depends(get_current_user_id), router_service: ChatService = Depends(get_router_service)):
+    """查询主Agent, 非流式响应"""
+    response = await get_main_agent_response(request.query, request.session_id, user_id)
+    return success_response(data=response)
 
-@chat_router.post("/rag/query", response_model=RAGResponse)
+@chat_router.post("/rag/query")
 async def query_rag(
         request: RAGRequest,
         router_service: ChatService = Depends(get_router_service),
