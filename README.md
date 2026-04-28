@@ -342,8 +342,8 @@ FastAPIAgentService/
 ### 1. 克隆项目
 
 ```bash
-git clone <项目仓库地址>
-cd OAProject
+git clone https://github.com/RMA-MUN/oa-brain
+cd oa-brain
 ```
 
 ### 2. 后端配置与启动
