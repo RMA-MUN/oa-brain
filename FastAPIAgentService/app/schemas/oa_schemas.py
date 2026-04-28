@@ -119,19 +119,20 @@ class AttendanceCreateRequest(BaseModel):
     API: /Attendance/attendance/ (POST)
     """
     title: str = Field(..., description="考勤标题")
-    type: int = Field(..., description="考勤类型ID")
+    attendance_type_id: int = Field(..., description="考勤类型ID")
     start_time: str = Field(..., description="开始时间，格式：YYYY-MM-DD HH:MM:SS")
     end_time: str = Field(..., description="结束时间，格式：YYYY-MM-DD HH:MM:SS")
     request_content: str = Field(..., description="请假原因")
-    responser: str = Field(..., description="审批人ID")
+    # response 由Django端自动生成并判断，无需手动填写
+    # responser: str = Field(..., description="审批人ID")
 
 
 class AttendanceUpdateRequest(BaseModel):
     """考勤记录更新请求模型
     API: /Attendance/attendance/ (PUT)
     """
-    status: str = Field(..., description="审批状态", pattern="^(approved|rejected)$")
-    comment: Optional[str] = Field(None, description="审批意见")
+    status: int = Field(..., description="审批状态，1为审批中，2为已审批，3为已拒绝", pattern="^(approved|rejected)$")
+    approval_content: Optional[str] = Field(None, description="审批意见")
 
 
 class AttendanceRecord(BaseModel):

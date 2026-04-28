@@ -3,11 +3,10 @@
 """
 import os
 import json
-from datetime import datetime
-
 import httpx
-from typing import Optional
 
+from datetime import datetime
+from typing import Optional
 from dotenv import load_dotenv
 from langchain_core.tools import tool
 
@@ -19,21 +18,10 @@ from app.schemas.oa_schemas import (
     InformUpdateRequest,
 )
 
-# 自定义JSON解析器，支持无引号键
-def parse_json_with_unquoted_keys(json_str):
-    """解析可能包含无引号键的JSON字符串"""
-    import re
-    # 将无引号键转换为有引号键
-    json_str = re.sub(r'(\w+):', r'"\1":', json_str)
-    try:
-        return json.loads(json_str)
-    except json.JSONDecodeError:
-        return None
-
 # 确保请求数据为严格JSON格式
 def ensure_strict_json(data):
     """确保数据为严格JSON格式"""
-    import json
+
     return json.loads(json.dumps(data))
 
 load_dotenv()
@@ -138,39 +126,19 @@ async def get_attendance_records(token: str, who: Optional[str] = None) -> str:
         return f"获取考勤记录失败: {str(e)}"
 
 
-@tool(description="创建考勤记录，必须提供以下参数：1) JWT token (字符串)，2) type (整数，考勤类型ID)，3) start_time (字符串，开始时间，格式：2024-01-01 09:00:00)，4) end_time (字符串，结束时间，格式：2024-01-02 18:00:00)，5) reason (字符串，请假原因)，6) responser (字符串，审批人ID)。")
+@tool(description="创建考勤记录，必须提供以下参数：1) JWT token (字符串)，2) title (字符串，考勤标题)，3) attendance_type_id (整数，考勤类型ID)，4) start_time (字符串，开始时间，格式：2024-01-01 09:00:00)，5) end_time (字符串，结束时间，格式：2024-01-02 18:00:00)，6) request_content (字符串，请假原因)。")
 async def create_attendance_record(
     token: str,
-    type: int = None,
-    start_time: str = None,
-    end_time: str = None,
-    reason: str = None,
-    responser: str = None,
-    attendance_data: dict = None
+    request_body: AttendanceCreateRequest
 ) -> str:
     """创建考勤记录工具"""
     try:
-        # 优先使用单独的参数，如果没有则尝试从attendance_data中获取
-        if type is None and attendance_data:
-            type = attendance_data.get('type')
-        if start_time is None and attendance_data:
-            start_time = attendance_data.get('start_time')
-        if end_time is None and attendance_data:
-            end_time = attendance_data.get('end_time')
-        if reason is None and attendance_data:
-            reason = attendance_data.get('reason')
-        if responser is None and attendance_data:
-            responser = attendance_data.get('responser')
-
-        # 验证所有必需参数
-        if any(param is None for param in [type, start_time, end_time, reason, responser]):
-            return "创建考勤记录失败：缺少必需参数"
-
-        # 确保所有参数类型正确
-        try:
-            type = int(type)
-        except (ValueError, TypeError):
-            return "创建考勤记录失败：考勤类型必须是整数"
+        # 从 Pydantic 模型中提取参数
+        title = request_body.title
+        attendance_type_id = request_body.attendance_type_id
+        start_time = request_body.start_time
+        end_time = request_body.end_time
+        request_content = request_body.request_content
 
         # 确保时间格式正确
         try:
@@ -180,13 +148,8 @@ async def create_attendance_record(
         except ValueError:
             return "创建考勤记录失败：时间格式错误，正确格式为：YYYY-MM-DD HH:MM:SS"
 
-        request_data = {
-            "type": type,
-            "start_time": start_time,
-            "end_time": end_time,
-            "reason": reason,
-            "responser": responser
-        }
+        # 构建请求数据（直接使用 Pydantic 模型的字典形式）
+        request_data = request_body.dict()
 
         async with httpx.AsyncClient() as client:
             response = await client.post(
@@ -206,7 +169,46 @@ async def create_attendance_record(
 
             response.raise_for_status()
             data = response.json()
-            return f"考勤记录创建成功！\nID: {data['id']}\n类型: {data['type']}\n状态: {data['status']}"
+            
+            # 从返回数据中提取详细信息
+            record_id = data.get('id', '未知')
+            record_title = data.get('title', '未知')
+            
+            # 获取考勤类型信息
+            attendance_type = data.get('attendance_type', {})
+            type_name = attendance_type.get('name', '未知')
+            
+            # 获取申请人信息
+            requester_name = data.get('requester_name', '未知')
+            requester_email = data.get('requester', {}).get('email', '未知')
+            
+            # 获取审批人信息
+            responser_name = data.get('responser_name', '未知')
+            
+            # 获取状态（1=审批中，2=已审批，3=已拒绝）
+            status_code = data.get('status', 0)
+            status_map = {1: '审批中', 2: '已审批', 3: '已拒绝'}
+            record_status = status_map.get(status_code, f'未知状态({status_code})')
+            
+            # 获取时间信息
+            start_time = data.get('start_time', '未知')
+            end_time = data.get('end_time', '未知')
+            request_content = data.get('request_content', '未知')
+            
+            # 格式化返回信息
+            result = f"考勤记录创建成功！\n"
+            result += f"┌───────────────────────────────\n"
+            result += f"│ 申请标题：{record_title}\n"
+            result += f"│ 记录ID：{record_id}\n"
+            result += f"│ 考勤类型：{type_name}\n"
+            result += f"│ 申请人：{requester_name} ({requester_email})\n"
+            result += f"│ 审批人：{responser_name}\n"
+            result += f"│ 请假原因：{request_content}\n"
+            result += f"│ 请假时间：{start_time} 至 {end_time}\n"
+            result += f"│ 当前状态：{record_status}\n"
+            result += f"└───────────────────────────────"
+            
+            return result
     except Exception as e:
         logger.error(f"创建考勤记录失败: {str(e)}")
         return f"创建考勤记录失败: {str(e)}"
