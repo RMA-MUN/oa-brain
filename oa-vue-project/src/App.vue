@@ -1,8 +1,8 @@
 <script setup>
-import GlobalFloatingBall from './components/GlobalFloatingBall.vue'
 </script>
 
 <template>
-<RouterView /><GlobalFloatingBall /></template>
+  <RouterView />
+</template>
 
 <style scoped></style>

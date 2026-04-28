@@ -7,6 +7,7 @@ import informPublic from '@/views/inform/public.vue'
 import informList from '@/views/inform/list.vue'
 import informDetail from '@/views/inform/detail.vue'
 import home from '@/views/home/home.vue'
+import aiChat from '@/views/ai/chat.vue'
 import { useAuthStore } from '@/stores/auth.js'
 import { ElMessage } from 'element-plus'
 
@@ -59,6 +60,11 @@ const router = createRouter({
           path: '/',
           name: 'home',
           component: home,
+        },
+        {
+          path: '/ai/chat',
+          name: 'aiChat',
+          component: aiChat,
         },
       ],
     },

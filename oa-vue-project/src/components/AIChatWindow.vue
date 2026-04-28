@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, nextTick } from 'vue'
 import markdownIt from 'markdown-it'
 
 const props = defineProps({
@@ -21,11 +21,18 @@ const messages = ref([
 ])
 
 const inputMessage = ref('')
-const isTyping = ref(false)
+const messagesContainer = ref(null)
 const md = markdownIt()
 
 const closeChat = () => {
   emit('close')
+}
+
+const scrollToBottom = async () => {
+  await nextTick()
+  if (messagesContainer.value) {
+    messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
+  }
 }
 
 const sendMessage = async () => {
@@ -49,32 +56,55 @@ const sendMessage = async () => {
   }
   messages.value.push(assistantMessage)
 
-  await simulateTyping(assistantMessage)
+  await scrollToBottom()
+  await sendMessageToAPI(assistantMessage, userMessage)
 }
 
-const simulateTyping = async (message) => {
-  const responses = [
-    '我理解你的问题了，让我为你分析一下...',
-    '这是一个很好的问题！根据我的分析：\n\n1. 首先需要考虑问题的核心要点\n2. 然后分析可能的解决方案\n3. 最后给出建议',
-    '谢谢你的提问。关于这个话题，我可以提供一些参考信息：\n\n- **优点**：操作简单，效率高\n- **缺点**：需要一定的学习成本\n\n你可以根据实际情况选择最适合的方案。'
-  ]
+const sendMessageToAPI = async (message, userMessage) => {
+  const token = localStorage.getItem('TOKEN_KEY')
+  if (!token) {
+    message.content = '请先登录系统'
+    message.loading = false
+    return
+  }
 
-  const response = responses[Math.floor(Math.random() * responses.length)]
-  let currentIndex = 0
-  message.loading = true
+  try {
+    const response = await fetch('http://127.0.0.1:8001/api/main-agent/query/stream', {
+      method: 'POST',
+      headers: {
+        'accept': 'application/json',
+        'Authorization': 'Bearer ' + token,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        session_id: '',
+        query: userMessage
+      })
+    })
 
-  return new Promise((resolve) => {
-    const timer = setInterval(() => {
-      if (currentIndex < response.length) {
-        message.content = response.substring(0, currentIndex + 1)
-        currentIndex++
-      } else {
-        clearInterval(timer)
-        message.loading = false
-        resolve()
-      }
-    }, 30)
-  })
+    if (!response.ok) {
+      throw new Error('API请求失败')
+    }
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder('utf-8')
+    message.loading = true
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      const chunk = decoder.decode(value, { stream: true })
+      message.content += chunk
+      await scrollToBottom()
+    }
+
+    message.loading = false
+  } catch (error) {
+    console.error('API请求错误:', error)
+    message.content = '抱歉，服务器暂时不可用，请稍后重试。'
+    message.loading = false
+  }
 }
 
 const renderMarkdown = (content) => {
@@ -93,7 +123,7 @@ const handleKeyPress = (event) => {
     <div class="chat-header">
       <h3>AI助手</h3><button class="close-btn" @click="closeChat">×</button>
     </div>
-    <div class="chat-messages">
+    <div ref="messagesContainer" class="chat-messages">
       <div v-for="message in messages" :key="message.id" :class="['message', message.role]">
         <div class="message-content" v-html="renderMarkdown(message.content)"></div>
         <div v-if="message.loading" class="typing-indicator"><span></span><span></span><span></span></div>
