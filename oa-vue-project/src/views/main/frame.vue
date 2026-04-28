@@ -90,6 +90,13 @@
             </el-menu-item-group>>
           </el-sub-menu>
 
+          <el-menu-item index="5" route="/ai/chat">
+            <el-icon>
+              <ChatDotRound />
+            </el-icon>
+            <span>AI助手</span>
+          </el-menu-item>
+
         </el-menu>
       </el-aside>
     </transition>
@@ -295,6 +302,7 @@
 <script setup name="Frame">
 // 导入外部JS逻辑
 import useFrameComposable from '@/assets/js/frame.js'
+import { ChatDotRound } from '@element-plus/icons-vue'
 
 // 解构获取所有状态和方法
 const {
