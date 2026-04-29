@@ -283,9 +283,14 @@ class MainAgent(BaseAgent):
         if not required_params:
             return True
 
+        # 将 jwt_token 注入到 existing_params 中，避免参数提取 Agent 重复询问
+        existing_params = subtask.get("params") or {}
+        if state.jwt_token and "jwt_token" not in existing_params:
+            existing_params["jwt_token"] = state.jwt_token
+
         extraction_result = await self.param_extraction_agent.process({
             "required_params": list(required_params),
-            "existing_params": subtask.get("params") or {},
+            "existing_params": existing_params,
             "subtask_description": subtask.get("description") or "",
             "task_type": task_type,
             "user_input": state.user_input,
