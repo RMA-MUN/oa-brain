@@ -1,8 +1,12 @@
 <script setup>
-import { ref, nextTick, onMounted } from 'vue'
+import { ref, nextTick, onMounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import markdownIt from 'markdown-it'
 import { ChatDotRound, Delete, CopyDocument } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
+
+const route = useRoute()
+const router = useRouter()
 
 const messages = ref([
   {
@@ -18,6 +22,57 @@ const inputMessage = ref('')
 const messagesContainer = ref(null)
 const isLoading = ref(false)
 const md = markdownIt()
+const sessionId = ref('')
+
+const fetchSessionHistory = async (session_id) => {
+  const token = localStorage.getItem('TOKEN_KEY')
+  if (!token || !session_id) return
+
+  try {
+    const response = await fetch(`http://127.0.0.1:8001/api/session/${session_id}`, {
+      method: 'GET',
+      headers: {
+        'accept': 'application/json',
+        'Authorization': 'Bearer ' + token
+      }
+    })
+
+    if (response.ok) {
+      const result = await response.json()
+
+      if (result.code === 200 && result.data && result.data.history && Array.isArray(result.data.history)) {
+        const historyMessages = []
+        let messageId = 1
+
+        result.data.history.forEach((conversation, convIndex) => {
+          if (Array.isArray(conversation) && conversation.length >= 2) {
+            historyMessages.push({
+              id: messageId++,
+              role: 'user',
+              content: conversation[0],
+              loading: false,
+              timestamp: new Date().toLocaleTimeString()
+            })
+
+            historyMessages.push({
+              id: messageId++,
+              role: 'assistant',
+              content: conversation[1],
+              loading: false,
+              timestamp: new Date().toLocaleTimeString()
+            })
+          }
+        })
+
+        if (historyMessages.length > 0) {
+          messages.value = historyMessages
+        }
+      }
+    }
+  } catch (error) {
+    console.error('获取历史会话失败:', error)
+  }
+}
 
 const scrollToBottom = async () => {
   await nextTick()
@@ -54,6 +109,15 @@ const sendMessage = async () => {
   await sendMessageToAPI(assistantMessage, userMessage)
 }
 
+const updateUrlWithSessionId = (newSessionId) => {
+  if (!newSessionId || sessionId.value === newSessionId) return
+
+  sessionId.value = newSessionId
+  localStorage.setItem('AI_SESSION_ID', newSessionId)
+
+  router.push(`/ai/chat/${newSessionId}`)
+}
+
 const sendMessageToAPI = async (message, userMessage) => {
   const token = localStorage.getItem('TOKEN_KEY')
   if (!token) {
@@ -72,7 +136,7 @@ const sendMessageToAPI = async (message, userMessage) => {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        session_id: '',
+        session_id: sessionId.value || '',
         query: userMessage
       })
     })
@@ -99,6 +163,10 @@ const sendMessageToAPI = async (message, userMessage) => {
           try {
             const jsonStr = line.substring(6).trim()
             const data = JSON.parse(jsonStr)
+
+            if (data.session_id) {
+              updateUrlWithSessionId(data.session_id)
+            }
 
             if (data.type === 'response' && data.content) {
               message.content += data.content
@@ -134,6 +202,24 @@ const handleKeyPress = (event) => {
   }
 }
 
+const createNewSession = () => {
+  localStorage.removeItem('AI_SESSION_ID')
+  sessionId.value = ''
+
+  messages.value = [
+    {
+      id: Date.now(),
+      role: 'assistant',
+      content: '你好！我是AI助手，有什么可以帮助你的吗？',
+      loading: false,
+      timestamp: new Date().toLocaleTimeString()
+    }
+  ]
+
+  router.push('/ai/chat')
+  ElMessage.success('已创建新会话')
+}
+
 const clearChat = () => {
   messages.value = [
     {
@@ -155,8 +241,34 @@ const copyMessage = (content) => {
   })
 }
 
-onMounted(() => {
+const handleSessionIdChange = async (newSessionId) => {
+  if (!newSessionId) return
+
+  sessionId.value = newSessionId
+  localStorage.setItem('AI_SESSION_ID', newSessionId)
+  await fetchSessionHistory(newSessionId)
+  await scrollToBottom()
+}
+
+onMounted(async () => {
+  const routeSessionId = route.params.session_id
+
+  if (routeSessionId) {
+    await handleSessionIdChange(routeSessionId)
+  } else {
+    const storedSessionId = localStorage.getItem('AI_SESSION_ID')
+    if (storedSessionId) {
+      router.replace(`/ai/chat/${storedSessionId}`)
+    }
+  }
+
   scrollToBottom()
+})
+
+watch(() => route.params.session_id, async (newSessionId) => {
+  if (newSessionId && newSessionId !== sessionId.value) {
+    await handleSessionIdChange(newSessionId)
+  }
 })
 </script>
 
@@ -171,6 +283,9 @@ onMounted(() => {
         <span class="toolbar-title">AI助手</span>
       </div>
       <div class="toolbar-right">
+        <el-button type="primary" plain size="small" @click="createNewSession">
+          新建会话
+        </el-button>
         <el-button type="danger" plain size="small" @click="clearChat" :icon="Delete">
           清空对话
         </el-button>
@@ -204,11 +319,6 @@ onMounted(() => {
             </el-button>
           </div>
         </div>
-
-        <!-- 用户头像 -->
-        <div v-if="message.role === 'user'" class="avatar user-avatar">
-          <el-avatar :size="36" src="src/assets/img/dog.png" />
-        </div>
       </div>
     </div>
 
@@ -234,7 +344,7 @@ onMounted(() => {
   height: calc(100vh - 60px);
   display: flex;
   flex-direction: column;
-  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+  background: #ffffff;
 }
 
 /* 顶部工具栏 */
@@ -243,9 +353,8 @@ onMounted(() => {
   justify-content: space-between;
   align-items: center;
   padding: 16px 24px;
-  background: rgba(255, 255, 255, 0.05);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  backdrop-filter: blur(10px);
+  background: #ffffff;
+  border-bottom: 1px solid #e8e8e8;
 }
 
 .toolbar-left {
@@ -266,7 +375,7 @@ onMounted(() => {
 .toolbar-title {
   font-size: 18px;
   font-weight: 600;
-  color: #ffffff;
+  color: #303133;
 }
 
 /* 消息列表区域 */
@@ -277,6 +386,7 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 20px;
+  background: #ffffff;
 }
 
 .messages-container::-webkit-scrollbar {
@@ -288,12 +398,12 @@ onMounted(() => {
 }
 
 .messages-container::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.2);
+  background: #d9d9d9;
   border-radius: 3px;
 }
 
 .messages-container::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.3);
+  background: #bfbfbf;
 }
 
 .message-wrapper {
@@ -320,11 +430,11 @@ onMounted(() => {
   width: 40px;
   height: 40px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #e8f4fd 0%, #f0e6fa 100%);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: white;
+  color: #667eea;
   font-size: 20px;
 }
 
@@ -353,15 +463,16 @@ onMounted(() => {
 }
 
 .message-bubble.user {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
+  background: #f5f5f5;
+  color: #303133;
+  border: 1px solid #e8e8e8;
   border-bottom-right-radius: 4px;
 }
 
 .message-bubble.assistant {
-  background: rgba(255, 255, 255, 0.1);
-  color: #e0e0e0;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: #f5f5f5;
+  color: #303133;
+  border: 1px solid #e8e8e8;
   border-bottom-left-radius: 4px;
 }
 
@@ -380,23 +491,23 @@ onMounted(() => {
 /* 输入区域 */
 .input-area {
   padding: 20px 24px;
-  background: rgba(255, 255, 255, 0.05);
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  background: #ffffff;
+  border-top: 1px solid #e8e8e8;
 }
 
 .input-wrapper {
   max-width: 900px;
   margin: 0 auto;
-  background: rgba(255, 255, 255, 0.08);
+  background: #fafafa;
   border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid #e8e8e8;
   padding: 16px;
 }
 
 .chat-input :deep(.el-textarea__inner) {
   background: transparent;
   border: none;
-  color: #ffffff;
+  color: #303133;
   font-size: 15px;
   resize: none;
   padding: 0;
@@ -404,7 +515,7 @@ onMounted(() => {
 }
 
 .chat-input :deep(.el-textarea__inner::placeholder) {
-  color: rgba(255, 255, 255, 0.4);
+  color: #909399;
 }
 
 .chat-input :deep(.el-textarea__inner:focus) {
@@ -420,23 +531,24 @@ onMounted(() => {
 
 .input-hint {
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.4);
+  color: #909399;
 }
 
 .send-btn {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #a5d8ff 0%, #cbb8fc 100%);
   border: none;
   padding: 10px 24px;
   border-radius: 8px;
+  color: #303133;
 }
 
 .send-btn:hover:not(:disabled) {
-  opacity: 0.9;
+  opacity: 0.85;
   transform: translateY(-1px);
 }
 
 .send-btn:disabled {
-  background: rgba(255, 255, 255, 0.1);
+  background: #e8e8e8;
   opacity: 0.5;
 }
 
@@ -484,20 +596,20 @@ onMounted(() => {
 .message-text :deep(h5),
 .message-text :deep(h6) {
   margin: 16px 0 12px 0;
-  color: #ffffff;
+  color: #303133;
   font-weight: 600;
 }
 
 .message-text :deep(p) {
   margin: 8px 0;
-  color: #e0e0e0;
+  color: #606266;
 }
 
 .message-text :deep(ul),
 .message-text :deep(ol) {
   margin: 8px 0;
   padding-left: 20px;
-  color: #e0e0e0;
+  color: #606266;
 }
 
 .message-text :deep(li) {
@@ -505,34 +617,34 @@ onMounted(() => {
 }
 
 .message-text :deep(code) {
-  background: rgba(0, 0, 0, 0.3);
+  background: #f2f6fc;
   padding: 2px 6px;
   border-radius: 4px;
   font-family: 'Fira Code', monospace;
   font-size: 13px;
-  color: #ff6b6b;
+  color: #e74c3c;
 }
 
 .message-text :deep(pre) {
-  background: rgba(0, 0, 0, 0.3);
+  background: #fafafa;
   padding: 16px;
   border-radius: 8px;
   overflow-x: auto;
   margin: 12px 0;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid #e8e8e8;
 }
 
 .message-text :deep(pre code) {
   background: none;
   padding: 0;
-  color: #e0e0e0;
+  color: #303133;
 }
 
 .message-text :deep(blockquote) {
   border-left: 4px solid #667eea;
   padding-left: 16px;
   margin: 12px 0;
-  color: #b0b0b0;
+  color: #909399;
   font-style: italic;
 }
 
@@ -544,19 +656,19 @@ onMounted(() => {
 
 .message-text :deep(th),
 .message-text :deep(td) {
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  border: 1px solid #e8e8e8;
   padding: 8px 12px;
   text-align: left;
-  color: #e0e0e0;
+  color: #606266;
 }
 
 .message-text :deep(th) {
-  background: rgba(255, 255, 255, 0.1);
+  background: #f5f5f5;
   font-weight: 600;
 }
 
 .message-text :deep(a) {
-  color: #667eea;
+  color: #409eff;
   text-decoration: none;
 }
 
@@ -565,13 +677,13 @@ onMounted(() => {
 }
 
 .message-text :deep(strong) {
-  color: #ffffff;
+  color: #303133;
   font-weight: 600;
 }
 
 .message-text :deep(hr) {
   border: none;
-  border-top: 1px solid rgba(255, 255, 255, 0.2);
+  border-top: 1px solid #e8e8e8;
   margin: 16px 0;
 }
 </style>

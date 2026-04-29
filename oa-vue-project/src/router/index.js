@@ -62,7 +62,7 @@ const router = createRouter({
           component: home,
         },
         {
-          path: '/ai/chat',
+          path: '/ai/chat/:session_id?',
           name: 'aiChat',
           component: aiChat,
         },
