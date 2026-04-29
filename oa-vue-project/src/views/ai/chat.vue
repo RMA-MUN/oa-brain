@@ -2,7 +2,7 @@
 import { ref, nextTick, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import markdownIt from 'markdown-it'
-import { ChatDotRound, Delete, CopyDocument } from '@element-plus/icons-vue'
+import { ChatDotRound, Delete, CopyDocument, Menu } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 
 const route = useRoute()
@@ -23,6 +23,103 @@ const messagesContainer = ref(null)
 const isLoading = ref(false)
 const md = markdownIt()
 const sessionId = ref('')
+const sidebarCollapsed = ref(false)
+const sessions = ref([])
+const userId = ref('')
+
+const fetchUserSessions = async () => {
+  const token = localStorage.getItem('TOKEN_KEY')
+  if (!token) return
+
+  try {
+    const response = await fetch(`http://127.0.0.1:8001/api/sessions/${userId.value}`, {
+      method: 'GET',
+      headers: {
+        'accept': 'application/json',
+        'Authorization': 'Bearer ' + token
+      }
+    })
+
+    if (response.ok) {
+      const result = await response.json()
+      if (result.code === 200 && result.data && result.data.sessions) {
+        sessions.value = result.data.sessions
+      }
+    }
+  } catch (error) {
+    console.error('获取会话列表失败:', error)
+  }
+}
+
+const selectSession = async (session) => {
+  await handleSessionIdChange(session.id)
+  router.push(`/ai/chat/${session.id}`)
+}
+
+const deleteSession = async (session_id) => {
+  const token = localStorage.getItem('TOKEN_KEY')
+  if (!token) return
+
+  try {
+    const response = await fetch(`http://127.0.0.1:8001/api/session/${session_id}`, {
+      method: 'DELETE',
+      headers: {
+        'accept': 'application/json',
+        'Authorization': 'Bearer ' + token
+      }
+    })
+
+    if (response.ok) {
+      const result = await response.json()
+      if (result.code === 200) {
+        sessions.value = sessions.value.filter(s => s.id !== session_id)
+
+        if (sessionId.value === session_id) {
+          sessionId.value = ''
+          localStorage.removeItem('AI_SESSION_ID')
+          messages.value = [
+            {
+              id: Date.now(),
+              role: 'assistant',
+              content: '你好！我是AI助手，有什么可以帮助你的吗？',
+              loading: false,
+              timestamp: new Date().toLocaleTimeString()
+            }
+          ]
+          router.push('/ai/chat')
+        }
+
+        ElMessage.success('会话已删除')
+      }
+    }
+  } catch (error) {
+    console.error('删除会话失败:', error)
+    ElMessage.error('删除会话失败')
+  }
+}
+
+const toggleSidebar = () => {
+  sidebarCollapsed.value = !sidebarCollapsed.value
+}
+
+const formatTime = (datetimeStr) => {
+  if (!datetimeStr) return ''
+
+  const date = new Date(datetimeStr)
+  const now = new Date()
+  const diff = now - date
+
+  const minutes = Math.floor(diff / 60000)
+  const hours = Math.floor(diff / 3600000)
+  const days = Math.floor(diff / 86400000)
+
+  if (minutes < 1) return '刚刚'
+  if (minutes < 60) return `${minutes}分钟前`
+  if (hours < 24) return `${hours}小时前`
+  if (days < 7) return `${days}天前`
+
+  return date.toLocaleDateString('zh-CN')
+}
 
 const fetchSessionHistory = async (session_id) => {
   const token = localStorage.getItem('TOKEN_KEY')
@@ -137,7 +234,8 @@ const sendMessageToAPI = async (message, userMessage) => {
       },
       body: JSON.stringify({
         session_id: sessionId.value || '',
-        query: userMessage
+        query: userMessage,
+        jwt_token: token
       })
     })
 
@@ -202,7 +300,7 @@ const handleKeyPress = (event) => {
   }
 }
 
-const createNewSession = () => {
+const createNewSession = async () => {
   localStorage.removeItem('AI_SESSION_ID')
   sessionId.value = ''
 
@@ -217,20 +315,8 @@ const createNewSession = () => {
   ]
 
   router.push('/ai/chat')
+  await fetchUserSessions()
   ElMessage.success('已创建新会话')
-}
-
-const clearChat = () => {
-  messages.value = [
-    {
-      id: Date.now(),
-      role: 'assistant',
-      content: '你好！我是AI助手，有什么可以帮助你的吗？',
-      loading: false,
-      timestamp: new Date().toLocaleTimeString()
-    }
-  ]
-  ElMessage.success('对话已清空')
 }
 
 const copyMessage = (content) => {
@@ -250,7 +336,23 @@ const handleSessionIdChange = async (newSessionId) => {
   await scrollToBottom()
 }
 
+const getUserIdFromToken = () => {
+  const token = localStorage.getItem('TOKEN_KEY')
+  if (!token) return ''
+
+  try {
+    const payload = token.split('.')[1]
+    const decoded = JSON.parse(atob(payload))
+    return decoded.user_id || ''
+  } catch {
+    return ''
+  }
+}
+
 onMounted(async () => {
+  userId.value = getUserIdFromToken()
+  await fetchUserSessions()
+
   const routeSessionId = route.params.session_id
 
   if (routeSessionId) {
@@ -274,68 +376,97 @@ watch(() => route.params.session_id, async (newSessionId) => {
 
 <template>
   <div class="ai-chat-page">
-    <!-- 顶部工具栏 -->
-    <div class="chat-toolbar">
-      <div class="toolbar-left">
-        <el-icon class="ai-icon">
-          <ChatDotRound />
-        </el-icon>
-        <span class="toolbar-title">AI助手</span>
+    <!-- 侧边栏 -->
+    <aside :class="['sidebar', { collapsed: sidebarCollapsed }]">
+      <div class="sidebar-header">
+        <span v-if="!sidebarCollapsed" class="sidebar-title">会话列表</span>
       </div>
-      <div class="toolbar-right">
-        <el-button type="primary" plain size="small" @click="createNewSession">
-          新建会话
-        </el-button>
-        <el-button type="danger" plain size="small" @click="clearChat" :icon="Delete">
-          清空对话
-        </el-button>
+      <div class="sidebar-content">
+        <div v-for="session in sessions" :key="session.id"
+          :class="['session-item', { active: session.id === sessionId }]">
+          <div class="session-content" @click="selectSession(session)">
+            <span class="session-title">{{ session.title }}</span>
+            <span v-if="!sidebarCollapsed" class="session-time">{{ formatTime(session.updated_at) }}</span>
+          </div>
+          <button v-if="!sidebarCollapsed" class="session-delete" @click.stop="deleteSession(session.id)">
+            <el-icon>
+              <Delete />
+            </el-icon>
+          </button>
+        </div>
+        <div v-if="sessions.length === 0 && !sidebarCollapsed" class="empty-sessions">
+          暂无会话记录
+        </div>
       </div>
-    </div>
+    </aside>
 
-    <!-- 消息列表区域 -->
-    <div ref="messagesContainer" class="messages-container">
-      <div v-for="message in messages" :key="message.id" :class="['message-wrapper', message.role]">
-        <!-- AI头像 -->
-        <div v-if="message.role === 'assistant'" class="avatar ai-avatar">
-          <el-icon>
+    <!-- 侧边栏切换按钮 -->
+    <button class="sidebar-toggle" @click="toggleSidebar">
+      <span :class="['toggle-icon', { 'collapsed': sidebarCollapsed }]">‹</span>
+    </button>
+
+    <!-- 主内容区 -->
+    <main class="chat-main">
+      <!-- 顶部工具栏 -->
+      <div class="chat-toolbar">
+        <div class="toolbar-left">
+          <el-icon class="ai-icon">
             <ChatDotRound />
           </el-icon>
+          <span class="toolbar-title">AI助手</span>
         </div>
+        <div class="toolbar-right">
+          <el-button type="primary" plain size="small" @click="createNewSession">
+            新建会话
+          </el-button>
+        </div>
+      </div>
 
-        <!-- 消息内容 -->
-        <div class="message-content-wrapper">
-          <div :class="['message-bubble', message.role]">
-            <div class="message-text" v-html="renderMarkdown(message.content)"
-              v-if="!message.loading || message.content"></div>
-            <div v-if="message.loading && !message.content" class="loading-dots">
-              <span></span>
-              <span></span>
-              <span></span>
+      <!-- 消息列表区域 -->
+      <div ref="messagesContainer" class="messages-container">
+        <div v-for="message in messages" :key="message.id" :class="['message-wrapper', message.role]">
+          <!-- AI头像 -->
+          <div v-if="message.role === 'assistant'" class="avatar ai-avatar">
+            <el-icon>
+              <ChatDotRound />
+            </el-icon>
+          </div>
+
+          <!-- 消息内容 -->
+          <div class="message-content-wrapper">
+            <div :class="['message-bubble', message.role]">
+              <div class="message-text" v-html="renderMarkdown(message.content)"
+                v-if="!message.loading || message.content"></div>
+              <div v-if="message.loading && !message.content" class="loading-dots">
+                <span></span>
+                <span></span>
+                <span></span>
+              </div>
+            </div>
+            <div class="message-actions" v-if="message.role === 'assistant' && !message.loading">
+              <el-button link size="small" @click="copyMessage(message.content)" :icon="CopyDocument">
+                复制
+              </el-button>
             </div>
           </div>
-          <div class="message-actions" v-if="message.role === 'assistant' && !message.loading">
-            <el-button link size="small" @click="copyMessage(message.content)" :icon="CopyDocument">
-              复制
+        </div>
+      </div>
+
+      <!-- 输入区域 -->
+      <div class="input-area">
+        <div class="input-wrapper">
+          <el-input v-model="inputMessage" type="textarea" :rows="3" placeholder="输入你的问题，按Enter发送，Shift+Enter换行..."
+            @keydown="handleKeyPress" resize="none" class="chat-input" />
+          <div class="input-actions">
+            <span class="input-hint">Enter 发送 · Shift + Enter 换行</span>
+            <el-button type="primary" @click="sendMessage" :disabled="!inputMessage.trim() || isLoading"
+              :loading="isLoading" class="send-btn">
+              发送
             </el-button>
           </div>
         </div>
       </div>
-    </div>
-
-    <!-- 输入区域 -->
-    <div class="input-area">
-      <div class="input-wrapper">
-        <el-input v-model="inputMessage" type="textarea" :rows="3" placeholder="输入你的问题，按Enter发送，Shift+Enter换行..."
-          @keydown="handleKeyPress" resize="none" class="chat-input" />
-        <div class="input-actions">
-          <span class="input-hint">Enter 发送 · Shift + Enter 换行</span>
-          <el-button type="primary" @click="sendMessage" :disabled="!inputMessage.trim() || isLoading"
-            :loading="isLoading" class="send-btn">
-            发送
-          </el-button>
-        </div>
-      </div>
-    </div>
+    </main>
   </div>
 </template>
 
@@ -343,8 +474,144 @@ watch(() => route.params.session_id, async (newSessionId) => {
 .ai-chat-page {
   height: calc(100vh - 60px);
   display: flex;
-  flex-direction: column;
   background: #ffffff;
+}
+
+/* 侧边栏 */
+.sidebar {
+  width: 280px;
+  background: #fafafa;
+  border-right: 1px solid #e8e8e8;
+  display: flex;
+  flex-direction: column;
+  transition: width 0.3s ease;
+}
+
+.sidebar.collapsed {
+  width: 0;
+  overflow: hidden;
+  border-right: none;
+}
+
+.sidebar-header {
+  padding: 16px;
+  border-bottom: 1px solid #e8e8e8;
+}
+
+.sidebar-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.sidebar-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.session-item {
+  padding: 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.session-item:hover {
+  background: #f0f0f0;
+}
+
+.session-item.active {
+  background: #e8f4fd;
+}
+
+.session-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.session-title {
+  font-size: 13px;
+  color: #606266;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-time {
+  font-size: 12px;
+  color: #909399;
+  margin-top: 4px;
+  display: block;
+}
+
+.session-delete {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #909399;
+  transition: all 0.2s ease;
+}
+
+.session-delete:hover {
+  background: #ffecf0;
+  color: #f56c6c;
+}
+
+.empty-sessions {
+  text-align: center;
+  padding: 40px 16px;
+  color: #909399;
+  font-size: 13px;
+}
+
+/* 侧边栏切换按钮 */
+.sidebar-toggle {
+  width: 48px;
+  height: 60px;
+  background: #ffffff;
+  border: none;
+  border-right: 1px solid #e8e8e8;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #606266;
+  transition: background 0.2s ease;
+}
+
+.sidebar-toggle:hover {
+  background: #f5f5f5;
+}
+
+.toggle-icon {
+  font-size: 24px;
+  color: #606266;
+  transition: transform 0.3s ease;
+}
+
+.toggle-icon.collapsed {
+  transform: rotate(180deg);
+}
+
+/* 主内容区 */
+.chat-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 /* 顶部工具栏 */
