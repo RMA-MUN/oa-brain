@@ -206,6 +206,7 @@ class AddStaffRequest(BaseModel):
     username: str = Field(..., description="用户名")
     password: str = Field(..., description="密码")
     email: EmailStr = Field(..., description="邮箱")
+    department: int = Field(..., description="部门ID")
 
 
 class AddStaffResponse(BaseModel):
@@ -233,9 +234,11 @@ class EditStaffRequest(BaseModel):
     """编辑员工接口请求模型
     API: /staff/staff/edit/<uuid>/ (PUT)
     """
-    username: Optional[str] = Field(None, description="用户名")
-    email: Optional[EmailStr] = Field(None, description="邮箱")
-    department: Optional[int] = Field(None, description="部门ID")
+    # 所有字段可选，不传则不生成该属性
+    username: str | None = Field(None, description="用户名")
+    email: EmailStr | None = Field(None, description="邮箱")
+    department: int | None = Field(None, description="部门ID")
+    status: int | None = Field(None, description="状态，0为未激活，1为已激活，2为已禁用")
 
 
 class EditStaffResponse(BaseModel):
@@ -262,7 +265,6 @@ class InformCreateRequest(BaseModel):
     """
     title: str = Field(..., description="标题")
     content: str = Field(..., description="内容")
-    public: bool = Field(False, description="是否公开")
     department_ids: Optional[List[int]] = Field(None, description="部门ID列表")
 
 
