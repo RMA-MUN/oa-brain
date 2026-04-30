@@ -75,7 +75,7 @@ cp .env.example .env
 编辑 `.env` 文件：
 
 ```env
-# LLM配置（二选一）
+# LLM配置
 DEEPSEEK_BASE_URL=http://localhost:11434
 ALIYUN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 ALIYUN_ACCESS_KEY_SECRET=your_key
@@ -113,6 +113,8 @@ uv run python -m uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
 
 服务运行于：http://127.0.0.1:8001
 API文档：http://127.0.0.1:8001/docs
+
+离线api文档：[api.json](api.json)
 
 ## Agent架构
 
