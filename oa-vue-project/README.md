@@ -23,7 +23,7 @@
 
 ```bash
 # 克隆项目到本地
-git clone <项目仓库地址>
+https://github.com/RMA-MUN/oa-brain
 
 # 进入项目目录
 cd oa-vue-project
@@ -42,7 +42,7 @@ yarn install
 ## 项目启动
 
 ```bash
-# 开发环境启动（默认端口3000）
+# 开发环境启动
 npm run dev
 
 # 或
@@ -83,7 +83,7 @@ src/
 - **员工管理**: 员工信息的增删改查
 - **考勤管理**: 考勤记录查看与统计
 - **通知管理**: 系统通知发布与查看
-- **权限控制**: 基于角色的访问控制
+- **AI对话**：深度集成AI服务，全自动考勤、通知等功能
 
 ## 代码规范
 
@@ -101,7 +101,3 @@ yarn format
 2. 开发环境配置在.env.development文件中
 3. 生产环境配置在.env.production文件中
 4. 构建后的文件位于dist目录下
-
-## License
-
-[MIT](LICENSE)
