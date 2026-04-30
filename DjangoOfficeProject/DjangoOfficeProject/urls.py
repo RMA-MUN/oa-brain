@@ -18,6 +18,7 @@ from django.contrib import admin
 from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
+from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView
 
 # 修复访问http://127.0.0.1:8000/media/img/aqb9AbgYoDxbGyzrpvduWz.jpg失败
 urlpatterns = [
@@ -28,5 +29,7 @@ urlpatterns = [
     path('file/', include('apps.file.urls')),
     path('inform/', include('apps.inform.urls')),
     path('home/', include('apps.home.urls')),
+    path('download_api_docs/', SpectacularAPIView.as_view(), name='schema'),
+    path('redoc/', SpectacularRedocView.as_view(url_name='schema'), name='redoc'),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
 

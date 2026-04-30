@@ -45,6 +45,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'rest_framework',
+    'drf_spectacular',
     'corsheaders',
     'apps.officeAuth',
     'apps.officeAttendance',
@@ -212,10 +213,29 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         # 权限类
     ],
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
     # 3. 全局分页
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     # 每页默认显示数量
     'PAGE_SIZE': 10
+}
+
+SPECTACULAR_SETTINGS = {
+    "TITLE": "DjangoOfficeProject API 文档",
+    "VERSION": "1.0.0",
+    "SERVE_INCLUDE_SCHEMA": False,
+
+    # 开启 JWT Bearer 认证
+    "SECURITY": [{"BearerAuth": []}],  # 全局启用 JWT 认证
+    "COMPONENTS": {
+        "securitySchemes": {
+            "BearerAuth": {
+                "type": "http",
+                "scheme": "bearer",
+                "bearerFormat": "JWT",  # 这是 JWT Token
+            }
+        }
+    },
 }
 
 APPEND_SLASH = True
