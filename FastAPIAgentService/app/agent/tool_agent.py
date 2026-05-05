@@ -22,7 +22,6 @@ from app.tools.oa_tools import (
     create_inform,
     update_inform,
     get_latest_informs,
-    get_latest_attendance,
     get_department_staff_count
 )
 from app.tools.rag_tools import (
@@ -132,7 +131,6 @@ class ToolAgent(BaseAgent):
             create_inform,
             update_inform,
             get_latest_informs,
-            get_latest_attendance,
             get_department_staff_count,
             
             # RAG工具

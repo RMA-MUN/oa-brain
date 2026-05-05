@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, AsyncGenerator
 
 from app.agent.base import BaseAgent, AgentState
 from app.agent.task_decomposer import TaskDecomposer
@@ -357,24 +357,54 @@ class MainAgent(BaseAgent):
         """整合结果"""
         # 整合所有Agent的执行结果
         results = []
+        success_count = 0
+        failed_tasks = []
         
         for task_id, task_data in state.agent_results.items():
             result = task_data.get("result", {})
+            agent_id = task_data.get("agent")
+            task_description = task_data.get("task", {}).get("description", "")
+            
             if result.get("success"):
+                success_count += 1
                 # 根据不同的Agent提取结果
-                agent_id = task_data.get("agent")
                 if agent_id == "tool_agent":
-                    results.append(result.get("output", ""))
+                    output = result.get("output", "")
+                    if output:
+                        results.append(output)
                 elif agent_id == "knowledge_agent":
-                    results.append(result.get("knowledge_content", ""))
+                    content = result.get("knowledge_content", "")
+                    if content:
+                        results.append(content)
                 elif agent_id == "memory_agent":
                     results.append("记忆操作成功")
+            else:
+                failed_tasks.append(task_description)
         
         # 生成最终回复
         if results:
             state.final_response = "\n\n".join(results)
         else:
-            state.final_response = "任务执行完成，但没有返回结果。"
+            # 根据不同情况给出有意义的回复
+            user_input = state.user_input or ""
+            
+            # 检查是否是问候或闲聊
+            greetings = ["你好", "您好", "嗨", "hello", "hi", "早上好", "下午好", "晚上好"]
+            praises = ["聪明", "厉害", "真棒", "真聪明", "太棒了"]
+            
+            is_greeting = any(g in user_input for g in greetings)
+            is_praise = any(p in user_input for p in praises)
+            
+            if is_greeting:
+                state.final_response = "你好！我是您的智能办公助手，请问有什么可以帮助您的吗？"
+            elif is_praise:
+                state.final_response = "谢谢夸奖！很高兴能帮到您。如果还有其他问题，随时告诉我。"
+            elif failed_tasks:
+                state.final_response = f"任务执行过程中遇到一些问题，以下任务未能成功完成：\n{chr(10).join(f'- {task}' for task in failed_tasks)}\n\n请检查您的请求是否正确，或者稍后再试。"
+            elif success_count > 0:
+                state.final_response = "任务已执行完成，但暂时没有获取到相关数据。这可能是因为：\n- 当前没有相关记录\n- 查询条件可能需要调整\n\n请问您需要查询其他内容吗？"
+            else:
+                state.final_response = "抱歉，我暂时无法为您提供帮助。请您重新描述您的需求，我会尽力为您解答。"
         
         return state
     
@@ -427,3 +457,117 @@ class MainAgent(BaseAgent):
     def can_handle(self, task_type: str) -> bool:
         """判断是否能够处理特定类型的任务"""
         return True  # 主Agent可以处理所有任务
+    
+    async def process_stream(self, input_data: Dict[str, Any]) -> AsyncGenerator[Dict[str, Any], None]:
+        """
+        流式处理输入数据，实时返回中间结果
+        :param input_data: 输入数据
+        :return: 异步生成器，产生中间结果
+        """
+        try:
+            user_input = input_data.get("user_input") or input_data.get("query")
+            session_id = input_data.get("session_id")
+            user_id = input_data.get("user_id")
+            jwt_token = input_data.get("jwt_token")
+            
+            if not all([user_input, session_id, user_id]):
+                yield {"type": "final", "content": "处理失败：缺少必要参数"}
+                return
+            
+            # 初始化状态
+            state = AgentState()
+            state.user_input = user_input
+            state.session_id = session_id
+            state.user_id = user_id
+            state.jwt_token = jwt_token
+            
+            logger.info(f"【主Agent流式】开始处理请求，用户ID: {user_id}, 会话ID: {session_id}, 输入: {user_input[:50]}...")
+            
+            # 步骤1: 获取会话历史
+            yield {"type": "thinking", "content": "获取会话历史..."}
+            state = await self._get_session_history(state)
+            
+            # 步骤2: 任务分解
+            yield {"type": "thinking", "content": "分析您的请求..."}
+            state = await self._decompose_task(state)
+            
+            # 如果任务分解失败，返回错误
+            if not state.task_subtasks:
+                yield {"type": "final", "content": "抱歉，无法理解您的请求。请重新描述您的需求。"}
+                return
+            
+            # 步骤3: 执行子任务
+            ordered_subtasks = self._sort_subtasks(state.task_subtasks or [])
+            for idx, subtask in enumerate(ordered_subtasks):
+                # 检查参数是否完整
+                if not await self._check_params_complete(subtask, state):
+                    if state.final_response:
+                        yield {"type": "final", "content": state.final_response}
+                    return
+                
+                # 路由到合适的Agent
+                route_result = await self.agent_router.process({
+                    "task_type": subtask["task_type"],
+                    "subtask_description": subtask["description"],
+                    "required_params": subtask["required_params"]
+                })
+                
+                if route_result.get("success"):
+                    selected_agent_id = route_result.get("selected_agent")
+                    agent = self.agent_map.get(selected_agent_id)
+                    
+                    if agent:
+                        # 发送工具调用信息
+                        yield {"type": "tool_call", "tool_name": selected_agent_id, "tool_input": subtask.get("params", {})}
+                        
+                        # 执行子任务
+                        task_input = {
+                            "task_description": subtask["description"],
+                            "params": subtask.get("params", {}),
+                            "session_id": state.session_id,
+                            "user_id": state.user_id,
+                            "jwt_token": state.jwt_token
+                        }
+                        
+                        if selected_agent_id == "knowledge_agent":
+                            task_input["query"] = subtask.get("query", subtask["description"])
+                        elif selected_agent_id == "memory_agent":
+                            task_input["action"] = subtask.get("action", "get_history")
+                        
+                        # 获取工具执行结果
+                        agent_result = await agent.process(task_input)
+                        
+                        # 保存Agent执行结果
+                        state.agent_results[subtask["task_id"]] = {
+                            "task": subtask,
+                            "agent": selected_agent_id,
+                            "result": agent_result
+                        }
+                        
+                        # 如果工具执行成功，发送结果
+                        if agent_result.get("success"):
+                            output = self._extract_response_from_agent_result(selected_agent_id, agent_result)
+                            if output:
+                                yield {"type": "tool_result", "tool_name": selected_agent_id, "content": output}
+                            
+                            # 检查是否可以提前结束
+                            if self._can_finalize_after_subtask(subtask, selected_agent_id, agent_result):
+                                state.final_response = output
+                                break
+            
+            # 步骤4: 整合结果
+            if not state.final_response:
+                state = await self._integrate_results(state)
+            
+            # 发送最终响应
+            if state.final_response:
+                yield {"type": "final", "content": state.final_response}
+            
+            # 步骤5: 保存记忆（在后台异步执行，不阻塞流式输出）
+            await self._save_memory(state)
+            
+            logger.info(f"【主Agent流式】处理完成，会话ID: {session_id}")
+            
+        except Exception as e:
+            logger.error(f"【主Agent流式】处理失败: {str(e)}", exc_info=True)
+            yield {"type": "final", "content": f"处理失败：{str(e)}"}
