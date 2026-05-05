@@ -1,9 +1,14 @@
 <script setup>
-import { ref, nextTick, onMounted, watch } from 'vue'
+import { ref, nextTick, onMounted, watch, markRaw } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import markdownIt from 'markdown-it'
 import { ChatDotRound, Delete, CopyDocument, Menu } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
+
+const forceUpdate = ref(0)
+const triggerUpdate = () => {
+  forceUpdate.value++
+}
 
 const route = useRoute()
 const router = useRouter()
@@ -228,53 +233,99 @@ const sendMessageToAPI = async (message, userMessage) => {
     const response = await fetch('http://127.0.0.1:8001/api/main-agent/query/stream', {
       method: 'POST',
       headers: {
-        'accept': 'application/json',
+        'Accept': 'text/event-stream',
         'Authorization': 'Bearer ' + token,
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive'
       },
       body: JSON.stringify({
         session_id: sessionId.value || '',
         query: userMessage,
         jwt_token: token
-      })
+      }),
+      signal: AbortController?.signal
     })
 
     if (!response.ok) {
-      throw new Error('API请求失败')
+      const errorText = await response.text()
+      throw new Error(`API请求失败: ${response.status} - ${errorText}`)
+    }
+
+    const contentType = response.headers.get('content-type')
+    console.log('响应Content-Type:', contentType)
+
+    if (!response.body) {
+      throw new Error('响应体为空')
     }
 
     const reader = response.body.getReader()
     const decoder = new TextDecoder('utf-8')
     let buffer = ''
+    let streamDone = false
+    let receivedChars = 0
 
     while (true) {
       const { done, value } = await reader.read()
-      if (done) break
+
+      if (done || streamDone) {
+        console.log('流式读取结束，已接收字符数:', receivedChars)
+        break
+      }
 
       buffer += decoder.decode(value, { stream: true })
+      receivedChars += value?.length || 0
 
-      const lines = buffer.split('\n')
-      buffer = lines.pop() || ''
+      const events = buffer.split('\n\n')
+      buffer = events.pop() || ''
 
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          try {
-            const jsonStr = line.substring(6).trim()
-            const data = JSON.parse(jsonStr)
+      for (const event of events) {
+        const lines = event.split('\n')
+        let dataStr = ''
 
-            if (data.session_id) {
-              updateUrlWithSessionId(data.session_id)
-            }
-
-            if (data.type === 'response' && data.content) {
-              message.content += data.content
-              await scrollToBottom()
-            } else if (data.type === 'done') {
-              break
-            }
-          } catch (e) {
-            console.error('解析SSE数据失败:', e)
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            dataStr += line.substring(6)
+          } else if (line.startsWith('data:')) {
+            dataStr += line.substring(5)
           }
+        }
+
+        if (!dataStr.trim()) continue
+
+        try {
+          const data = JSON.parse(dataStr)
+          console.log('解析到数据:', data)
+
+          if (data.session_id) {
+            updateUrlWithSessionId(data.session_id)
+          }
+
+          if (data.type === 'response' && data.content) {
+            const messageIndex = messages.value.findIndex(m => m.id === message.id)
+            if (messageIndex !== -1) {
+              const updatedMessage = { ...messages.value[messageIndex] }
+              updatedMessage.content += data.content
+              messages.value[messageIndex] = updatedMessage
+            }
+            await nextTick()
+            await scrollToBottom()
+            await new Promise(resolve => requestAnimationFrame(resolve))
+          } else if (data.type === 'thinking' && data.content) {
+            const messageIndex = messages.value.findIndex(m => m.id === message.id)
+            if (messageIndex !== -1) {
+              const updatedMessage = { ...messages.value[messageIndex] }
+              updatedMessage.content += data.content
+              messages.value[messageIndex] = updatedMessage
+            }
+            await nextTick()
+            await scrollToBottom()
+          } else if (data.type === 'done') {
+            streamDone = true
+            break
+          }
+        } catch (e) {
+          console.error('解析JSON失败:', e, '原始数据:', dataStr)
         }
       }
     }
@@ -423,7 +474,7 @@ watch(() => route.params.session_id, async (newSessionId) => {
       </div>
 
       <!-- 消息列表区域 -->
-      <div ref="messagesContainer" class="messages-container">
+      <div ref="messagesContainer" class="messages-container" :key="forceUpdate">
         <div v-for="message in messages" :key="message.id" :class="['message-wrapper', message.role]">
           <!-- AI头像 -->
           <div v-if="message.role === 'assistant'" class="avatar ai-avatar">
@@ -435,7 +486,7 @@ watch(() => route.params.session_id, async (newSessionId) => {
           <!-- 消息内容 -->
           <div class="message-content-wrapper">
             <div :class="['message-bubble', message.role]">
-              <div class="message-text" v-html="renderMarkdown(message.content)"
+              <div class="message-text" :key="message.id + '-' + forceUpdate" v-html="renderMarkdown(message.content)"
                 v-if="!message.loading || message.content"></div>
               <div v-if="message.loading && !message.content" class="loading-dots">
                 <span></span>
