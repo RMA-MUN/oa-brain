@@ -326,8 +326,73 @@ class MainAgent(BaseAgent):
         if agent_id == "knowledge_agent":
             return str(agent_result.get("knowledge_content", "")).strip()
         if agent_id == "memory_agent":
-            return "记忆操作成功"
+            if agent_result.get("success"):
+                history = agent_result.get("history", [])
+                if history:
+                    return self._generate_memory_response(history)
+                else:
+                    return "当前会话暂无历史记录"
+            return "记忆操作失败"
         return ""
+    
+    def _generate_memory_response(self, history: List[tuple]) -> str:
+        """使用大模型根据会话历史生成自然语言回复"""
+        api_key = os.getenv("ALIYUN_ACCESS_KEY_SECRET")
+        base_url = os.getenv("ALIYUN_BASE_URL")
+        
+        if not api_key or not base_url:
+            history_lines = []
+            for idx, (user_msg, assistant_msg) in enumerate(history, 1):
+                history_lines.append(f"对话 {idx}：")
+                history_lines.append(f"您：{user_msg}")
+                history_lines.append(f"我：{assistant_msg}")
+                history_lines.append("")
+            return "\n".join(history_lines).strip()
+        
+        try:
+            from langchain_community.chat_models import ChatTongyi
+            from langchain_core.messages import HumanMessage, SystemMessage
+            
+            llm = ChatTongyi(
+                model="qwen3-max",
+                api_key=api_key,
+                base_url=base_url,
+                temperature=0.7,
+            )
+            
+            history_str = "\n".join([
+                f"用户: {user_msg}\n助手: {assistant_msg}"
+                for user_msg, assistant_msg in history
+            ])
+            
+            prompt = f"""
+            你是一个会话记忆助手。用户问你"你还记得我刚才说了什么吗"或类似的问题，
+            需要你根据以下会话历史用自然、友好的语言总结给用户。
+            
+            会话历史：
+            {history_str}
+            
+            请用自然、口语化的方式总结给用户，不要使用格式标记，就像正常对话一样回答。
+            如果只有一轮对话，可以直接复述；如果有多轮对话，请简要总结。
+            """
+            
+            messages = [
+                SystemMessage(content="你是一个友好的AI助手，擅长总结对话历史。"),
+                HumanMessage(content=prompt)
+            ]
+            
+            response = llm.invoke(messages)
+            return response.content.strip()
+            
+        except Exception as e:
+            logger.error(f"【记忆回复生成】调用大模型失败，使用模板备份: {str(e)}")
+            history_lines = []
+            for idx, (user_msg, assistant_msg) in enumerate(history, 1):
+                history_lines.append(f"对话 {idx}：")
+                history_lines.append(f"您：{user_msg}")
+                history_lines.append(f"我：{assistant_msg}")
+                history_lines.append("")
+            return "\n".join(history_lines).strip()
 
     def _can_finalize_after_subtask(
         self,
@@ -425,7 +490,11 @@ class MainAgent(BaseAgent):
                     if content:
                         results.append(content)
                 elif agent_id == "memory_agent":
-                    results.append("记忆操作成功")
+                    history = result.get("history", [])
+                    if history:
+                        results.append(self._generate_memory_response(history))
+                    else:
+                        results.append("当前会话暂无历史记录")
             else:
                 failed_tasks.append(task_description)
         
