@@ -2,6 +2,7 @@ from typing import Dict, Any, List, Tuple
 from app.agent.base import BaseAgent
 from app.core.logger_handler import logger
 from app.services import session_manager as sm
+from app.checkpoint import checkpoint_manager as cm
 
 
 class MemoryAgent(BaseAgent):
@@ -49,7 +50,10 @@ class MemoryAgent(BaseAgent):
     async def _get_session_history(self, session_id: str, user_id: str) -> Dict[str, Any]:
         """获取会话历史"""
         try:
-            history = await sm.session_manager.get_history(session_id, user_id)
+            if cm.checkpoint_manager:
+                history = await cm.checkpoint_manager.get_history(session_id, user_id)
+            else:
+                history = await sm.session_manager.get_history(session_id, user_id)
             
             logger.info(f"【记忆管理】获取会话历史成功，会话ID: {session_id}, 记录数: {len(history)}")
             
@@ -71,7 +75,10 @@ class MemoryAgent(BaseAgent):
     async def _add_memory(self, session_id: str, user_id: str, message: str, response: str) -> Dict[str, Any]:
         """添加记忆"""
         try:
-            await sm.session_manager.add_message(session_id, user_id, message, response)
+            if cm.checkpoint_manager:
+                await cm.checkpoint_manager.add_message(session_id, user_id, message, response)
+            else:
+                await sm.session_manager.add_message(session_id, user_id, message, response)
             
             logger.info(f"【记忆管理】添加记忆成功，会话ID: {session_id}")
             
@@ -92,7 +99,10 @@ class MemoryAgent(BaseAgent):
     async def _clear_memory(self, session_id: str, user_id: str) -> Dict[str, Any]:
         """清除记忆"""
         try:
-            await sm.session_manager.clear_session(session_id, user_id)
+            if cm.checkpoint_manager:
+                await cm.checkpoint_manager.clear_session(session_id, user_id)
+            else:
+                await sm.session_manager.clear_session(session_id, user_id)
             
             logger.info(f"【记忆管理】清除记忆成功，会话ID: {session_id}")
             
@@ -113,7 +123,10 @@ class MemoryAgent(BaseAgent):
     async def _get_user_sessions(self, user_id: str) -> Dict[str, Any]:
         """获取用户所有会话"""
         try:
-            sessions = await sm.session_manager.get_user_sessions(user_id)
+            if cm.checkpoint_manager:
+                sessions = await cm.checkpoint_manager.get_user_sessions(user_id)
+            else:
+                sessions = await sm.session_manager.get_user_sessions(user_id)
             
             logger.info(f"【记忆管理】获取用户会话成功，用户ID: {user_id}, 会话数: {len(sessions)}")
             
@@ -145,7 +158,10 @@ class MemoryAgent(BaseAgent):
     async def get_recent_memory(self, session_id: str, user_id: str, limit: int = 10) -> List[Tuple[str, str]]:
         """获取最近的记忆"""
         try:
-            history = await sm.session_manager.get_history(session_id, user_id)
+            if cm.checkpoint_manager:
+                history = await cm.checkpoint_manager.get_history(session_id, user_id)
+            else:
+                history = await sm.session_manager.get_history(session_id, user_id)
             return history[-limit:] if len(history) > limit else history
             
         except Exception as e:
@@ -155,7 +171,10 @@ class MemoryAgent(BaseAgent):
     async def search_memory(self, session_id: str, user_id: str, keyword: str) -> List[Tuple[str, str]]:
         """搜索记忆中的关键词"""
         try:
-            history = await sm.session_manager.get_history(session_id, user_id)
+            if cm.checkpoint_manager:
+                history = await cm.checkpoint_manager.get_history(session_id, user_id)
+            else:
+                history = await sm.session_manager.get_history(session_id, user_id)
             results = []
             
             for message, response in history:

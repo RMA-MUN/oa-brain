@@ -10,6 +10,7 @@ from app.router.health import health_router
 from app.router.user import user_router
 
 from app.services.database_session_manager import init_database_session_manager
+from app.checkpoint.checkpoint_manager import init_checkpoint_manager
 
 from app.core.failed_response_register import register_exception_handlers
 from app.core.rate_limit import RateLimitMiddleware
@@ -69,6 +70,10 @@ async def startup_event():
     # 使用数据库版本的会话管理器
     await init_database_session_manager()
     logger.info("数据库会话管理器初始化完成")
+    
+    # 初始化 Checkpoint 管理器
+    await init_checkpoint_manager()
+    logger.info("Checkpoint 管理器初始化完成")
 
     # 连接Redis
     await connect_redis()
