@@ -347,11 +347,59 @@ class MainAgent(BaseAgent):
         # OA/工具类查询拿到明确结果后直接结束，避免继续触发无关RAG
         if task_type in ("oa_operation", "attendance", "department", "user", "inform", "api_call"):
             return True
-        # tool_execution 只在非“无结果/失败”时结束
+        # tool_execution 使用LLM来判断是否可以结束
         if task_type == "tool_execution":
-            bad_signals = ("失败", "错误", "error", "无结果", "未找到")
-            return not any(s in output.lower() for s in bad_signals)
+            return self._llm_decide_finalize(subtask, output)
         return False
+    
+    def _llm_decide_finalize(self, subtask: Dict[str, Any], output: str) -> bool:
+        """使用LLM判断子任务结果是否已足够生成最终回答。"""
+        import os
+        from langchain_community.chat_models import ChatTongyi
+        from langchain_core.messages import HumanMessage
+        
+        api_key = os.getenv("ALIYUN_ACCESS_KEY_SECRET")
+        base_url = os.getenv("ALIYUN_BASE_URL")
+        
+        try:
+            llm = ChatTongyi(
+                model="qwen3-max",
+                api_key=api_key,
+                base_url=base_url,
+                temperature=0.1,
+            )
+            
+            prompt = f"""
+            请判断以下子任务的执行结果是否已经足够回答用户的原始请求，不需要继续执行后续子任务。
+            
+            用户原始请求: {subtask.get('description', '')}
+            
+            当前子任务名称: {subtask.get('task_name', '')}
+            
+            当前子任务执行结果: {output}
+            
+            请仔细分析：
+            1. 该结果是否直接回答了用户的核心问题？
+            2. 用户是否还需要更多信息才能完成其请求？
+            3. 是否还有必要继续执行其他子任务？
+            
+            请只输出 "YES" 或 "NO"，不要输出其他任何内容。
+            """
+            
+            response = llm.invoke([HumanMessage(content=prompt)])
+            result = response.content.strip().upper()
+            
+            logger.info(f"【LLM决策】是否可以提前结束: {result}")
+            
+            return result == "YES"
+        except Exception as e:
+            logger.error(f"【LLM决策】调用失败: {str(e)}")
+            # 如果LLM调用失败，使用简单的关键词判断作为后备
+            bad_signals = ("失败", "错误", "error", "无结果", "未找到")
+            if any(s in output.lower() for s in bad_signals):
+                return False
+            success_signals = ("提交成功", "审批通过", "创建成功", "申请成功", "已完成", "已批准", "success")
+            return any(s in output for s in success_signals)
     
     async def _integrate_results(self, state: AgentState) -> AgentState:
         """整合结果"""
@@ -488,7 +536,7 @@ class MainAgent(BaseAgent):
             state = await self._get_session_history(state)
             
             # 步骤2: 任务分解
-            yield {"type": "thinking", "content": "分析您的请求..."}
+            yield {"type": "thinking", "content": "任务分解Agent正在分析您的请求..."}
             state = await self._decompose_task(state)
             
             # 如果任务分解失败，返回错误
@@ -496,16 +544,21 @@ class MainAgent(BaseAgent):
                 yield {"type": "final", "content": "抱歉，无法理解您的请求。请重新描述您的需求。"}
                 return
             
+            # 输出任务分解结果
+            yield {"type": "thinking", "content": f"任务分解完成，共识别到{len(state.task_subtasks)}个子任务"}
+            
             # 步骤3: 执行子任务
             ordered_subtasks = self._sort_subtasks(state.task_subtasks or [])
             for idx, subtask in enumerate(ordered_subtasks):
                 # 检查参数是否完整
+                yield {"type": "thinking", "content": f"参数提取Agent正在检查子任务「{subtask.get('task_name', '未知')}」的参数..."}
                 if not await self._check_params_complete(subtask, state):
                     if state.final_response:
                         yield {"type": "final", "content": state.final_response}
                     return
                 
                 # 路由到合适的Agent
+                yield {"type": "thinking", "content": f"Agent路由器正在选择处理子任务「{subtask.get('task_name', '未知')}」的最佳Agent..."}
                 route_result = await self.agent_router.process({
                     "task_type": subtask["task_type"],
                     "subtask_description": subtask["description"],
@@ -517,6 +570,9 @@ class MainAgent(BaseAgent):
                     agent = self.agent_map.get(selected_agent_id)
                     
                     if agent:
+                        # 输出路由选择结果
+                        yield {"type": "thinking", "content": f"选择了{selected_agent_id}处理该子任务，置信度: {route_result.get('confidence', 0)}"}
+                        
                         # 发送工具调用信息
                         yield {"type": "tool_call", "tool_name": selected_agent_id, "tool_input": subtask.get("params", {})}
                         
@@ -544,11 +600,11 @@ class MainAgent(BaseAgent):
                             "result": agent_result
                         }
                         
-                        # 如果工具执行成功，发送结果
+                        # 如果工具执行成功，发送结果（作为thinking类型输出）
                         if agent_result.get("success"):
                             output = self._extract_response_from_agent_result(selected_agent_id, agent_result)
                             if output:
-                                yield {"type": "tool_result", "tool_name": selected_agent_id, "content": output}
+                                yield {"type": "thinking", "content": f"{selected_agent_id}执行结果: {output}"}
                             
                             # 检查是否可以提前结束
                             if self._can_finalize_after_subtask(subtask, selected_agent_id, agent_result):
@@ -557,6 +613,7 @@ class MainAgent(BaseAgent):
             
             # 步骤4: 整合结果
             if not state.final_response:
+                yield {"type": "thinking", "content": "整合所有子任务的执行结果..."}
                 state = await self._integrate_results(state)
             
             # 发送最终响应

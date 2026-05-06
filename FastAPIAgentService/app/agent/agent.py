@@ -241,23 +241,22 @@ async def get_main_agent_stream_response(
         # 使用流式方式处理请求，实时获取中间结果
         async for step_result in main_agent.process_stream(input_data):
             if step_result.get("type") == "thinking":
-                # 发送思考过程（可选，可用于调试）
-                logger.info(f"【主Agent流式响应】思考: {step_result.get('content')}")
+                # 发送思考过程（包括子Agent的思考信息）
+                thinking_content = step_result.get("content", "")
+                logger.info(f"【主Agent流式响应】思考: {thinking_content}")
+                yield f"data: {json.dumps({'type': 'thinking', 'content': thinking_content, 'session_id': session_id}, ensure_ascii=False)}\n\n"
             elif step_result.get("type") == "tool_call":
-                # 发送工具调用信息
+                # 发送工具调用信息（作为thinking类型输出）
                 tool_name = step_result.get("tool_name", "")
                 tool_input = step_result.get("tool_input", {})
                 yield f"data: {json.dumps({'type': 'thinking', 'content': f'正在调用{tool_name}工具...', 'session_id': session_id}, ensure_ascii=False)}\n\n"
                 logger.info(f"【主Agent流式响应】调用工具: {tool_name}, 参数: {tool_input}")
             elif step_result.get("type") == "tool_result":
-                # 发送工具执行结果
+                # 发送工具执行结果（作为thinking类型输出）
                 tool_name = step_result.get("tool_name", "")
                 result_content = step_result.get("content", "")
                 if result_content:
-                    # 逐字流式输出工具结果
-                    for char in result_content:
-                        yield f"data: {json.dumps({'type': 'response', 'content': char, 'session_id': session_id}, ensure_ascii=False)}\n\n"
-                        await asyncio.sleep(0.02)
+                    yield f"data: {json.dumps({'type': 'thinking', 'content': result_content, 'session_id': session_id}, ensure_ascii=False)}\n\n"
             elif step_result.get("type") == "final":
                 # 发送最终响应
                 final_response = step_result.get("content", "")
@@ -267,19 +266,8 @@ async def get_main_agent_stream_response(
                         yield f"data: {json.dumps({'type': 'response', 'content': char, 'session_id': session_id}, ensure_ascii=False)}\n\n"
                         await asyncio.sleep(0.02)
         
-        # 添加到会话历史（需要获取最终响应）
-        # 重新调用一次获取最终响应用于保存（或者在process_stream中保存）
-        result = await main_agent.process({
-            "query": query,
-            "session_id": session_id,
-            "user_id": user_id,
-            "chat_history": history,
-            "jwt_token": jwt_token
-        })
-        final_response = result.get("final_response", "")
-        if final_response:
-            await sm.session_manager.add_message(session_id, user_id, query, final_response)
-            logger.info(f"【主Agent流式响应】添加到会话历史成功")
+        # 添加到会话历史（在process_stream中已经保存）
+        # 不再重复调用process，避免重复执行
         
         # 发送结束标记
         yield f"data: {json.dumps({'type': 'done', 'session_id': session_id}, ensure_ascii=False)}\n\n"
