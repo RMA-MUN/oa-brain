@@ -202,6 +202,8 @@ const sendMessage = async () => {
     id: Date.now() + 1,
     role: 'assistant',
     content: '',
+    thinking: '',
+    thinkingCollapsed: false,
     loading: true,
     timestamp: new Date().toLocaleTimeString()
   }
@@ -295,7 +297,7 @@ const sendMessageToAPI = async (message, userMessage) => {
 
         try {
           const data = JSON.parse(dataStr)
-          console.log('解析到数据:', data)
+          // console.log('解析到数据:', data)
 
           if (data.session_id) {
             updateUrlWithSessionId(data.session_id)
@@ -315,7 +317,7 @@ const sendMessageToAPI = async (message, userMessage) => {
             const messageIndex = messages.value.findIndex(m => m.id === message.id)
             if (messageIndex !== -1) {
               const updatedMessage = { ...messages.value[messageIndex] }
-              updatedMessage.content += data.content
+              updatedMessage.thinking += data.content
               messages.value[messageIndex] = updatedMessage
             }
             await nextTick()
@@ -376,6 +378,13 @@ const copyMessage = (content) => {
   }).catch(() => {
     ElMessage.error('复制失败')
   })
+}
+
+const toggleThinking = (messageId) => {
+  const msg = messages.value.find(m => m.id === messageId)
+  if (msg) {
+    msg.thinkingCollapsed = !msg.thinkingCollapsed
+  }
 }
 
 const handleSessionIdChange = async (newSessionId) => {
@@ -486,6 +495,15 @@ watch(() => route.params.session_id, async (newSessionId) => {
           <!-- 消息内容 -->
           <div class="message-content-wrapper">
             <div :class="['message-bubble', message.role]">
+              <div v-if="message.thinking" class="thinking-section">
+                <div class="thinking-header" @click="toggleThinking(message.id)">
+                  <span>思考过程</span>
+                  <span :class="['toggle-icon', { collapsed: message.thinkingCollapsed }]">▼</span>
+                </div>
+                <div v-show="!message.thinkingCollapsed" class="thinking-content">
+                  {{ message.thinking }}
+                </div>
+              </div>
               <div class="message-text" :key="message.id + '-' + forceUpdate" v-html="renderMarkdown(message.content)"
                 v-if="!message.loading || message.content"></div>
               <div v-if="message.loading && !message.content" class="loading-dots">
@@ -792,6 +810,41 @@ watch(() => route.params.session_id, async (newSessionId) => {
   color: #303133;
   border: 1px solid #e8e8e8;
   border-bottom-left-radius: 4px;
+}
+
+.thinking-section {
+  font-size: 12px;
+  color: #909399;
+  background: #f9f9f9;
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+}
+
+.thinking-header {
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 500;
+  user-select: none;
+}
+
+.thinking-header .toggle-icon {
+  font-size: 10px;
+  transition: transform 0.2s ease;
+}
+
+.thinking-header .toggle-icon.collapsed {
+  transform: rotate(-90deg);
+}
+
+.thinking-content {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed #e8e8e8;
+  line-height: 1.5;
+  word-break: break-word;
 }
 
 /* 消息操作按钮 */
