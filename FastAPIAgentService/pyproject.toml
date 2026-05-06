@@ -38,6 +38,8 @@ dependencies = [
     "torchvision>=0.26.0",
     "torchaudio>=2.11.0",
     "langchain-dashscope>=0.1.8",
+    "langgraph-checkpoint>=1.0.0",
+    "langgraph-checkpoint-sqlite>=1.0.0",
 ]
 
 # 开发依赖
