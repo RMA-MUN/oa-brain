@@ -71,25 +71,37 @@ class CheckpointManager:
             if checkpoint is None:
                 return []
 
+            # 提取消息列表，使用 early return 减少嵌套
+            if not isinstance(checkpoint, dict):
+                return []
+            
+            channel_values = checkpoint.get("channel_values", {})
+            if not isinstance(channel_values, dict) or "messages" not in channel_values:
+                return []
+            
+            messages = channel_values["messages"]
+            if not isinstance(messages, list):
+                return []
+            
+            # 使用迭代器配对 human-ai 消息
             history = []
-            if isinstance(checkpoint, dict):
-                channel_values = checkpoint.get("channel_values", {})
-                if isinstance(channel_values, dict) and "messages" in channel_values:
-                    messages = channel_values["messages"]
-                    if isinstance(messages, list):
-                        i = 0
-                        while i < len(messages):
-                            msg = messages[i]
-                            if hasattr(msg, "type") and msg.type == "human":
-                                if i + 1 < len(messages):
-                                    next_msg = messages[i + 1]
-                                    if hasattr(next_msg, "type") and next_msg.type == "ai":
-                                        history.append((msg.content, next_msg.content))
-                                        i += 2
-                                        continue
-                                i += 1
-                            else:
-                                i += 1
+            iterator = iter(messages)
+            
+            for msg in iterator:
+                # 跳过非 human 消息
+                if not hasattr(msg, "type") or msg.type != "human":
+                    continue
+                
+                # 获取下一条消息作为 AI 回复
+                try:
+                    next_msg = next(iterator)
+                except StopIteration:
+                    break  # 没有下一条消息，结束循环
+                
+                # 验证是否为 AI 消息
+                if hasattr(next_msg, "type") and next_msg.type == "ai":
+                    history.append((msg.content, next_msg.content))
+            
             return history
         except Exception as e:
             logger.error(f"【Checkpoint 管理器】从 LangGraph 获取历史失败: {str(e)}")
