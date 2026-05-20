@@ -17,16 +17,16 @@ class MainAgent(BaseAgent):
     主调度Agent，负责协调各个子Agent的工作流程
     """
     
-    def __init__(self):
+    def __init__(self, task_decomposer=None, agent_router=None, tool_agent=None,
+                 knowledge_agent=None, memory_agent=None, param_extraction_agent=None):
         super().__init__("main_agent")
-        self.task_decomposer = TaskDecomposer()
-        self.agent_router = AgentRouter()
-        self.tool_agent = ToolAgent()
-        self.knowledge_agent = KnowledgeAgent()
-        self.memory_agent = MemoryAgent()
-        self.param_extraction_agent = ParamExtractionAgent()
+        self.task_decomposer = task_decomposer or TaskDecomposer()
+        self.agent_router = agent_router or AgentRouter()
+        self.tool_agent = tool_agent or ToolAgent()
+        self.knowledge_agent = knowledge_agent or KnowledgeAgent()
+        self.memory_agent = memory_agent or MemoryAgent()
+        self.param_extraction_agent = param_extraction_agent or ParamExtractionAgent()
         
-        # 创建Agent映射
         self.agent_map = {
             "task_decomposer": self.task_decomposer,
             "agent_router": self.agent_router,
@@ -36,58 +36,41 @@ class MainAgent(BaseAgent):
             "param_extraction_agent": self.param_extraction_agent,
         }
     
-    async def process_input(self, user_input: str, session_id: str, user_id: str, jwt_token: Optional[str] = None) -> Dict[str, Any]:
-        """
-        处理用户输入，协调工作流程
-        
-        :param user_input: 用户输入
-        :param session_id: 会话ID
-        :param user_id: 用户ID
-        :param jwt_token: JWT令牌
-        :return: 处理结果
-        """
+    async def _run_pipeline(self, user_input: str, session_id: str, user_id: str, jwt_token: Optional[str] = None) -> Dict[str, Any]:
+        """共享管道：非流式和流式路径均调用此方法或拆分步骤"""
         try:
-            # 初始化状态
             state = AgentState()
             state.user_input = user_input
             state.session_id = session_id
             state.user_id = user_id
             state.jwt_token = jwt_token
-            
+
             logger.info(f"【主Agent】开始处理请求，用户ID: {user_id}, 会话ID: {session_id}, 输入: {user_input[:50]}...")
-            
-            # 步骤1: 获取会话历史
+
             state = await self._get_session_history(state)
-            
-            # 步骤2: 任务分解
             state = await self._decompose_task(state)
-            
-            # 如果任务分解失败，返回错误
+
             if not state.task_subtasks:
                 return {
                     "response": "抱歉，无法理解您的请求。请重新描述您的需求。",
                     "error": "任务分解失败"
                 }
-            
-            # 步骤3: 执行子任务
+
             state = await self._execute_subtasks(state)
-            
-            # 步骤4: 整合结果
-            # 如果 final_response 已经被设置（例如，因为参数不完整而需要向用户询问），则跳过整合结果
+
             if not state.final_response:
                 state = await self._integrate_results(state)
-            
-            # 步骤5: 保存记忆
+
             await self._save_memory(state)
-            
+
             logger.info(f"【主Agent】处理完成，会话ID: {session_id}")
-            
+
             return {
                 "response": state.final_response or "处理完成",
                 "steps": state.agent_results,
                 "session_id": session_id
             }
-            
+
         except Exception as e:
             logger.error(f"【主Agent】处理失败: {str(e)}", exc_info=True)
             return {
@@ -409,12 +392,31 @@ class MainAgent(BaseAgent):
             return False
 
         task_type = (subtask.get("task_type") or "").lower()
-        # OA/工具类查询拿到明确结果后直接结束，避免继续触发无关RAG
+        # OA/工具类查询拿到明确结果后直接结束
         if task_type in ("oa_operation", "attendance", "department", "user", "inform", "api_call"):
             return True
-        # tool_execution 使用LLM来判断是否可以结束
+        # tool_execution: 启发式优先，LLM 降级
         if task_type == "tool_execution":
+            if self._has_actual_data(output):
+                return True
             return self._llm_decide_finalize(subtask, output)
+        return False
+
+    @staticmethod
+    def _has_actual_data(output: str) -> bool:
+        """启发式判断输出是否包含实际数据结果，避免调用 LLM 决策。"""
+        if not output:
+            return False
+        data_indicators = [
+            "考勤记录", "ID:", "记录列表", "共", "条记录",
+            "已通过", "已批准", "已拒绝",
+            "审批人", "申请时间",
+        ]
+        count = sum(1 for ind in data_indicators if ind in output)
+        if count >= 2:
+            return True
+        if len(output) > 100 and any(c in output for c in (":", "-", "\n")):
+            return True
         return False
     
     def _llm_decide_finalize(self, subtask: Dict[str, Any], output: str) -> bool:
@@ -537,7 +539,7 @@ class MainAgent(BaseAgent):
             })
     
     async def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        """处理输入数据"""
+        """非流式入口：通过 _run_pipeline 执行完整管道"""
         try:
             user_input = input_data.get("user_input") or input_data.get("query")
             session_id = input_data.get("session_id")
@@ -551,7 +553,7 @@ class MainAgent(BaseAgent):
                     "final_response": "处理失败：缺少必要参数"
                 }
             
-            result = await self.process_input(user_input, session_id, user_id, jwt_token)
+            result = await self._run_pipeline(user_input, session_id, user_id, jwt_token)
             response = result.get("response", "处理完成")
             
             return {
@@ -577,9 +579,8 @@ class MainAgent(BaseAgent):
     
     async def process_stream(self, input_data: Dict[str, Any]) -> AsyncGenerator[Dict[str, Any], None]:
         """
-        流式处理输入数据，实时返回中间结果
-        :param input_data: 输入数据
-        :return: 异步生成器，产生中间结果
+        流式入口：逐步骤 yield thinking/tool_call 事件，
+        与 _run_pipeline 共享相同的 _xxx() 业务方法。
         """
         try:
             user_input = input_data.get("user_input") or input_data.get("query")
@@ -591,7 +592,6 @@ class MainAgent(BaseAgent):
                 yield {"type": "final", "content": "处理失败：缺少必要参数"}
                 return
             
-            # 初始化状态
             state = AgentState()
             state.user_input = user_input
             state.session_id = session_id
@@ -600,33 +600,26 @@ class MainAgent(BaseAgent):
             
             logger.info(f"【主Agent流式】开始处理请求，用户ID: {user_id}, 会话ID: {session_id}, 输入: {user_input[:50]}...")
             
-            # 步骤1: 获取会话历史
             yield {"type": "thinking", "content": "获取会话历史..."}
             state = await self._get_session_history(state)
             
-            # 步骤2: 任务分解
             yield {"type": "thinking", "content": "任务分解Agent正在分析您的请求..."}
             state = await self._decompose_task(state)
             
-            # 如果任务分解失败，返回错误
             if not state.task_subtasks:
                 yield {"type": "final", "content": "抱歉，无法理解您的请求。请重新描述您的需求。"}
                 return
             
-            # 输出任务分解结果
             yield {"type": "thinking", "content": f"任务分解完成，共识别到{len(state.task_subtasks)}个子任务"}
             
-            # 步骤3: 执行子任务
             ordered_subtasks = self._sort_subtasks(state.task_subtasks or [])
             for idx, subtask in enumerate(ordered_subtasks):
-                # 检查参数是否完整
                 yield {"type": "thinking", "content": f"参数提取Agent正在检查子任务「{subtask.get('task_name', '未知')}」的参数..."}
                 if not await self._check_params_complete(subtask, state):
                     if state.final_response:
                         yield {"type": "final", "content": state.final_response}
                     return
                 
-                # 路由到合适的Agent
                 yield {"type": "thinking", "content": f"Agent路由器正在选择处理子任务「{subtask.get('task_name', '未知')}」的最佳Agent..."}
                 route_result = await self.agent_router.process({
                     "task_type": subtask["task_type"],
@@ -639,13 +632,9 @@ class MainAgent(BaseAgent):
                     agent = self.agent_map.get(selected_agent_id)
                     
                     if agent:
-                        # 输出路由选择结果
                         yield {"type": "thinking", "content": f"选择了{selected_agent_id}处理该子任务，置信度: {route_result.get('confidence', 0)}"}
-                        
-                        # 发送工具调用信息
                         yield {"type": "tool_call", "tool_name": selected_agent_id, "tool_input": subtask.get("params", {})}
                         
-                        # 执行子任务
                         task_input = {
                             "task_description": subtask["description"],
                             "params": subtask.get("params", {}),
@@ -659,39 +648,30 @@ class MainAgent(BaseAgent):
                         elif selected_agent_id == "memory_agent":
                             task_input["action"] = subtask.get("action", "get_history")
                         
-                        # 获取工具执行结果
                         agent_result = await agent.process(task_input)
                         
-                        # 保存Agent执行结果
                         state.agent_results[subtask["task_id"]] = {
                             "task": subtask,
                             "agent": selected_agent_id,
                             "result": agent_result
                         }
                         
-                        # 如果工具执行成功，发送结果（作为thinking类型输出）
                         if agent_result.get("success"):
                             output = self._extract_response_from_agent_result(selected_agent_id, agent_result)
                             if output:
                                 yield {"type": "thinking", "content": f"{selected_agent_id}执行结果: {output}"}
-                            
-                            # 检查是否可以提前结束
                             if self._can_finalize_after_subtask(subtask, selected_agent_id, agent_result):
                                 state.final_response = output
                                 break
             
-            # 步骤4: 整合结果
             if not state.final_response:
                 yield {"type": "thinking", "content": "整合所有子任务的执行结果..."}
                 state = await self._integrate_results(state)
             
-            # 发送最终响应
             if state.final_response:
                 yield {"type": "final", "content": state.final_response}
             
-            # 步骤5: 保存记忆（在后台异步执行，不阻塞流式输出）
             await self._save_memory(state)
-            
             logger.info(f"【主Agent流式】处理完成，会话ID: {session_id}")
             
         except Exception as e:
