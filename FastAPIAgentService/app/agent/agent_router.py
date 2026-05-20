@@ -1,4 +1,4 @@
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import os
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
@@ -104,6 +104,28 @@ class AgentRouter(BaseAgent):
             ("human", "任务类型: {task_type}\n子任务描述: {subtask_description}\n需要的参数: {required_params}")
         ])
     
+    def _rule_based_routing(self, task_type: str) -> Optional[str]:
+        """规则路由：task_type → agent_id 一对一映射，O(1) 匹配"""
+        mapping = {
+            "tool_execution": "tool_agent",
+            "oa_operation": "tool_agent",
+            "api_call": "tool_agent",
+            "attendance": "tool_agent",
+            "department": "tool_agent",
+            "user": "tool_agent",
+            "inform": "tool_agent",
+            "knowledge_query": "knowledge_agent",
+            "rag_query": "knowledge_agent",
+            "information_retrieval": "knowledge_agent",
+            "document_search": "knowledge_agent",
+            "memory_management": "memory_agent",
+            "history_query": "memory_agent",
+            "session_management": "memory_agent",
+            "task_decomposition": "task_decomposer",
+            "complex_task": "task_decomposer",
+        }
+        return mapping.get(task_type)
+
     async def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """处理输入数据，选择合适的Agent"""
         try:
@@ -111,6 +133,18 @@ class AgentRouter(BaseAgent):
             subtask_description = input_data.get("subtask_description", "")
             required_params = input_data.get("required_params", [])
 
+            # 先走规则路由，避免不必要的 LLM 调用
+            rule_based = self._rule_based_routing(task_type)
+            if rule_based:
+                logger.info(f"【Agent路由】规则命中: {task_type} → {rule_based}")
+                return {
+                    "success": True,
+                    "selected_agent": rule_based,
+                    "confidence": 1.0,
+                    "reason": f"任务类型 '{task_type}' 由规则路由匹配",
+                }
+
+            # 规则未命中，降级到 LLM 路由
             if self.llm is None:
                 self.llm = self._create_llm()
             if self.llm is None:
@@ -118,24 +152,19 @@ class AgentRouter(BaseAgent):
                     "success": False,
                     "error": "大模型客户端不可用，请检查 langchain/通义千问 依赖版本或环境配置"
                 }
-            
-            # 创建链
+
             chain = self.prompt_template | self.llm | self.parser
-            
-            # 执行路由决策
             result = await chain.ainvoke({
                 "task_type": task_type,
                 "subtask_description": subtask_description,
                 "required_params": ", ".join(required_params)
             })
-            
-            # 检查 result 类型，处理字典情况
+
             if isinstance(result, dict):
                 selected_agent = result.get("selected_agent")
                 confidence = result.get("confidence")
                 reason = result.get("reason")
-                logger.info(f"【Agent路由】选择了: {selected_agent}, 置信度: {confidence}")
-                
+                logger.info(f"【Agent路由】LLM 选择了: {selected_agent}, 置信度: {confidence}")
                 return {
                     "success": True,
                     "selected_agent": selected_agent,
@@ -143,16 +172,14 @@ class AgentRouter(BaseAgent):
                     "reason": reason
                 }
             else:
-                # 正常情况，result 是 AgentRouteResult 对象
-                logger.info(f"【Agent路由】选择了: {result.selected_agent}, 置信度: {result.confidence}")
-                
+                logger.info(f"【Agent路由】LLM 选择了: {result.selected_agent}, 置信度: {result.confidence}")
                 return {
                     "success": True,
                     "selected_agent": result.selected_agent,
                     "confidence": result.confidence,
                     "reason": result.reason
                 }
-            
+
         except Exception as e:
             logger.error(f"【Agent路由】失败: {str(e)}", exc_info=True)
             return {
