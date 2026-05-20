@@ -312,119 +312,6 @@ class ToolAgent(BaseAgent):
             return_intermediate_steps=True,
             handle_parsing_errors=custom_error_handler)
 
-    async def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        """处理输入数据，执行工具调用"""
-        try:
-            task_description = input_data.get("task_description", "")
-            params = input_data.get("params", {})
-
-            # 对“请假申请创建”场景走确定性调用，避免LLM工具参数JSON格式不稳定导致失败。
-            deterministic_leave_args = self._build_leave_tool_args(params)
-            if deterministic_leave_args:
-                logger.info(f"【工具执行】命中确定性请假流程，参数: {deterministic_leave_args}")
-                direct_result = await create_attendance_record.ainvoke(deterministic_leave_args)
-                return {
-                    "success": True,
-                    "output": direct_result,
-                    "steps": [{
-                        "tool": "create_attendance_record",
-                        "tool_input": deterministic_leave_args,
-                        "tool_output": direct_result,
-                        "thought": "使用确定性流程直接创建请假考勤记录，避免工具参数JSON格式错误。"
-                    }],
-                    "tool_used": ["create_attendance_record"]
-                }
-
-            # 对“创建通知”场景走确定性调用
-            if "create_inform" in task_description or "创建通知" in task_description:
-                token = params.get("jwt_token") or params.get("token")
-                inform_data = params.get("inform_data") or params.get("notification_data")
-                if token and inform_data:
-                    try:
-                        # 确保inform_data是字典格式
-                        if isinstance(inform_data, str):
-                            inform_data = json.loads(inform_data)
-                        
-                        # 验证必需字段
-                        if all(key in inform_data for key in ["title", "content"]):
-                            from app.schemas.oa_schemas import InformCreateRequest
-                            inform_request = InformCreateRequest(
-                                title=inform_data["title"],
-                                content=inform_data["content"],
-                                public=inform_data.get("public", False),
-                                department_ids=inform_data.get("department_ids", [])
-                            )
-                            logger.info(f"【工具执行】命中确定性创建通知流程，参数: {{'token': '***', 'title': '{inform_data['title']}'}}")
-                            direct_result = await create_inform.ainvoke({"token": token, "inform_data": inform_request})
-                            return {
-                                "success": True,
-                                "output": direct_result,
-                                "steps": [{
-                                    "tool": "create_inform",
-                                    "tool_input": {"token": token, "title": inform_data["title"]},
-                                    "tool_output": direct_result,
-                                    "thought": "使用确定性流程直接创建通知，避免工具参数JSON格式错误。"
-                                }],
-                                "tool_used": ["create_inform"]
-                            }
-                    except Exception as e:
-                        logger.warning(f"确定性创建通知流程失败: {str(e)}")
-                        # 失败后继续走通用流程
-
-            # 对“更新考勤记录”场景走确定性调用
-            if "update_attendance" in task_description or "更新考勤" in task_description:
-                token = params.get("jwt_token") or params.get("token")
-                record_id = params.get("record_id") or params.get("id")
-                update_data = params.get("update_data") or params.get("status")
-                if token and record_id:
-                    try:
-                        from app.schemas.oa_schemas import AttendanceUpdateRequest
-                        # 构建更新数据
-                        if isinstance(update_data, dict):
-                            attendance_update = AttendanceUpdateRequest(**update_data)
-                        elif isinstance(update_data, str):
-                            # 简单处理：如果只是状态字符串
-                            attendance_update = AttendanceUpdateRequest(status=update_data)
-                        else:
-                            attendance_update = AttendanceUpdateRequest(status="approved" if "通过" in task_description else "rejected")
-                        
-                        logger.info(f"【工具执行】命中确定性更新考勤流程，参数: {{'token': '***', 'record_id': {record_id}}}")
-                        direct_result = await update_attendance_record.ainvoke({"token": token, "record_id": record_id, "update_data": attendance_update})
-                        return {
-                            "success": True,
-                            "output": direct_result,
-                            "steps": [{
-                                "tool": "update_attendance_record",
-                                "tool_input": {"token": token, "record_id": record_id},
-                                "tool_output": direct_result,
-                                "thought": "使用确定性流程直接更新考勤记录，避免工具参数JSON格式错误。"
-                            }],
-                            "tool_used": ["update_attendance_record"]
-                        }
-                    except Exception as e:
-                        logger.warning(f"确定性更新考勤流程失败: {str(e)}")
-                        # 失败后继续走通用流程
-
-            
-            # 每次请求创建全新的 executor，避免跨会话状态污染
-            agent_executor = self._create_agent_executor()
-
-            # 构建工具调用输入：附带严格JSON参数块，减少模型生成非法arguments的概率
-            tool_input = task_description
-            if params:
-                strict_json_params = self._build_strict_json_block(params)
-                tool_input += (
-                    "\n参数（严格JSON，仅可使用该格式组装工具arguments）：\n"
-                    f"{strict_json_params}"
-                )
-            
-            logger.info(f"【工具执行】开始执行工具，输入: {tool_input}")
-            logger.info(f"【工具执行】参数: {params}")
-
-        except Exception as e:
-            logger.error(f"【工具执行】工具调用失败: {str(e)}")
-            return {"success": False, "message": f"工具调用失败: {str(e)}"}
-
     def _build_attendance_args(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """构建考勤记录参数"""
         token = params.get("jwt_token") or params.get("token") or params.get("auth_token")
@@ -489,6 +376,44 @@ class ToolAgent(BaseAgent):
             logger.error(f"直接调用工具失败: {str(direct_error)}")
             return {}
 
+    async def _try_direct_tool_call_from_error(self, error_str: str) -> Optional[Dict[str, Any]]:
+        """从 JSON 解析错误的异常消息中提取工具名和参数，修复后直接调用。"""
+        try:
+            tool_name_match = re.search(r'name\s*:\s*["\']([^"\']+)["\']', error_str)
+            arguments_match = re.search(r'arguments\s*:\s*([\s\S]*?)(?=}$|$)', error_str)
+
+            if not tool_name_match or not arguments_match:
+                return None
+
+            tool_name = tool_name_match.group(1)
+            arguments_str = arguments_match.group(1)
+            fixed = self._fix_json_format(arguments_str)
+            arguments = json.loads(fixed)
+
+            tool_map = {t.name: t for t in self.tools}
+            tool = tool_map.get(tool_name)
+            if not tool:
+                logger.warning(f"【工具执行】错误中提取的工具名 {tool_name} 不在工具列表中")
+                return None
+
+            logger.info(f"【工具执行】从错误中修复JSON，直接调用 {tool_name}")
+            direct_result = await tool.ainvoke(arguments)
+
+            return {
+                "success": True,
+                "output": str(direct_result),
+                "steps": [{
+                    "tool": tool_name,
+                    "tool_input": arguments,
+                    "tool_output": str(direct_result),
+                    "thought": f"从JSON解析错误中修复并直接调用 {tool_name}",
+                }],
+                "tool_used": [tool_name],
+            }
+        except Exception as e:
+            logger.warning(f"【工具执行】错误提取直接调用失败: {str(e)}")
+            return None
+
     async def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """处理输入数据，执行工具调用"""
         try:
@@ -551,9 +476,35 @@ class ToolAgent(BaseAgent):
                             }
                     except Exception as e:
                         logger.warning(f"确定性创建通知流程失败: {str(e)}")
-                        # 失败后继续走通用流程
 
-            # 对“更新考勤记录”场景走确定性调用
+            # 对"查询考勤记录"场景走确定性调用
+            if any(kw in task_description for kw in ("attendance_records", "get_attendance_records", "考勤记录", "查询考勤", "查考勤")):
+                token = params.get("jwt_token") or params.get("token")
+                if token:
+                    try:
+                        page = params.get("page", 1)
+                        page_size = params.get("page_size") or params.get("limit=5") or 10
+                        page = int(page) if not isinstance(page, int) else page
+                        page_size = int(page_size) if not isinstance(page_size, int) else page_size
+                        logger.info(f"【工具执行】命中确定性考勤查询流程")
+                        direct_result = await get_attendance_records.ainvoke({
+                            "token": str(token), "page": page, "page_size": page_size,
+                        })
+                        return {
+                            "success": True,
+                            "output": str(direct_result),
+                            "steps": [{
+                                "tool": "get_attendance_records",
+                                "tool_input": {"token": "***", "page": page, "page_size": page_size},
+                                "tool_output": str(direct_result),
+                                "thought": "使用确定性流程直接查询考勤记录，避免工具参数JSON格式错误。",
+                            }],
+                            "tool_used": ["get_attendance_records"],
+                        }
+                    except Exception as e:
+                        logger.warning(f"确定性考勤查询流程失败: {str(e)}")
+
+            # 对"更新考勤记录"场景走确定性调用
             if "update_attendance" in task_description or "更新考勤" in task_description:
                 token = params.get("jwt_token") or params.get("token")
                 record_id = params.get("record_id") or params.get("id")
@@ -621,18 +572,15 @@ class ToolAgent(BaseAgent):
                     
                     logger.error(f"【工具执行】执行失败 (尝试 {retry_count}/{max_retries}): {error_str}")
 
-                    # 检查是否是JSON格式错误
                     if "JSON format" in error_str or "function.arguments" in error_str:
-                        logger.warning(f"JSON格式错误，尝试修复并重新执行 (尝试 {retry_count}/{max_retries})")
-                        
-                        # 尝试直接从参数构建工具调用，而不是依赖LLM
-                        if "create_attendance_record" in task_description or "请假" in task_description:
-                            logger.info("【工具执行】尝试使用确定性方式构建请假申请参数")
-                            direct_result = await self._try_direct_attendance_call(params)
-                            if direct_result:
-                                return direct_result
-                        
-                        # 如果直接构建失败，重新构建工具输入，强调JSON格式要求
+                        logger.warning(f"JSON格式错误，尝试从错误中修复并直接调用工具 (尝试 {retry_count}/{max_retries})")
+
+                        # 从错误消息中提取工具名+参数并直接调用，绕过 LLM
+                        direct_result = await self._try_direct_tool_call_from_error(error_str)
+                        if direct_result:
+                            return direct_result
+
+                        # 若直接调用失败，回退到传统重试
                         retry_input = (
                             tool_input
                             + "\n\n重要提示：\n"
@@ -640,8 +588,6 @@ class ToolAgent(BaseAgent):
                             + "2. 所有键名和字符串值必须使用双引号包围\n"
                             + "3. 不允许出现注释、单引号、尾逗号\n"
                             + "4. 仅从上面的'参数（严格JSON）'中选取字段构造arguments\n"
-                            + "5. 创建考勤记录仅需: token, type, start_time, end_time, reason\n"
-                            + "6. 示例格式：{\"token\": \"your_token\", \"type\": 1, \"start_time\": \"2026-04-26T00:00:00\", \"end_time\": \"2026-04-27T23:59:59\", \"reason\": \"请假原因\"}\n"
                         )
                         tool_input = retry_input
                     elif "缺少必需参数" in error_str:
