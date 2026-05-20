@@ -9,8 +9,6 @@ from langchain_core.messages import BaseMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.tools import BaseTool
 
-from app.agent.agent_middleware import get_middleware
-
 from app.core.logger_handler import logger
 from app.services import session_manager as sm
 from app.tools.rag_tools import get_weather_tools, rag_summary_tools, what_time_is_now, get_user_info_tools, \
@@ -32,7 +30,6 @@ class AgentFactory:
             model: str = "qwen3-max",
             api_key: Optional[str] = None,
             default_tools: Optional[List[BaseTool]] = None,
-            default_middleware: Optional[List] = None,
             default_system_prompt: Optional[str] = None,
     ):
         """
@@ -45,7 +42,6 @@ class AgentFactory:
         self.model = model
         self.api_key = api_key or os.getenv("CHAT_API_KEY")
         self.default_tools = default_tools or self._get_default_tools()
-        self.default_middleware = default_middleware or self._get_default_middleware()
         self.default_system_prompt = default_system_prompt or self._get_default_system_prompt()
 
     @staticmethod
@@ -58,10 +54,6 @@ class AgentFactory:
             get_user_info_tools,
             reorder_documents_tools,
         ]
-
-    def _get_default_middleware(self) -> List:
-        """获取默认中间件列表"""
-        return get_middleware()
 
     @staticmethod
     def _get_default_system_prompt() -> str:
@@ -206,150 +198,78 @@ async def get_main_agent_stream_response(
 ) -> AsyncGenerator[str, None]:
     """
     获取主Agent流式响应（协调多个子Agent）
-    :param query: 用户查询
-    :param session_id: 会话 ID
-    :param user_id: 用户 ID
-    :param jwt_token: JWT令牌
-    :return: 流式响应生成器
+    流式路径直接使用 MainAgent.process_stream（详细的逐子任务 yield），
+    与 LangGraph 非流式路径共享相同的 _xxx() 业务方法。
     """
     try:
-        logger.info(f"【主Agent流式响应】开始处理请求，用户ID: {user_id}, 会话ID: {session_id}, 查询: {query}")
+        logger.info(f"【主Agent流式响应】开始处理请求，用户ID: {user_id}, 会话ID: {session_id}")
 
-        # 获取会话历史
-        history = await sm.session_manager.get_history(session_id, user_id)
-        logger.info(f"【主Agent流式响应】获取会话历史成功，历史记录数: {len(history)}")
-
-        # 导入MainAgent
         from app.agent.main_agent import MainAgent
-        
-        # 创建主Agent实例
+
         main_agent = MainAgent()
-        
-        # 准备输入数据
+
         input_data = {
             "query": query,
             "session_id": session_id,
             "user_id": user_id,
-            "chat_history": history,
             "jwt_token": jwt_token,
-            "streaming": True  # 标记为流式模式
         }
-        
-        # 发送初始响应
+
         yield f"data: {json.dumps({'type': 'response', 'content': '', 'session_id': session_id}, ensure_ascii=False)}\n\n"
-        
-        # 使用流式方式处理请求，实时获取中间结果
+
         async for step_result in main_agent.process_stream(input_data):
-            if step_result.get("type") == "thinking":
-                # 发送思考过程（包括子Agent的思考信息）
-                thinking_content = step_result.get("content", "")
-                logger.info(f"【主Agent流式响应】思考: {thinking_content}")
-                yield f"data: {json.dumps({'type': 'thinking', 'content': thinking_content, 'session_id': session_id}, ensure_ascii=False)}\n\n"
-            elif step_result.get("type") == "tool_call":
-                # 发送工具调用信息（作为thinking类型输出）
+            step_type = step_result.get("type")
+            if step_type == "thinking":
+                content = step_result.get("content", "")
+                logger.info(f"【主Agent流式响应】思考: {content}")
+                yield f"data: {json.dumps({'type': 'thinking', 'content': content, 'session_id': session_id}, ensure_ascii=False)}\n\n"
+            elif step_type == "tool_call":
                 tool_name = step_result.get("tool_name", "")
-                tool_input = step_result.get("tool_input", {})
                 yield f"data: {json.dumps({'type': 'thinking', 'content': f'正在调用{tool_name}工具...', 'session_id': session_id}, ensure_ascii=False)}\n\n"
-                logger.info(f"【主Agent流式响应】调用工具: {tool_name}, 参数: {tool_input}")
-            elif step_result.get("type") == "tool_result":
-                # 发送工具执行结果（作为thinking类型输出）
-                tool_name = step_result.get("tool_name", "")
-                result_content = step_result.get("content", "")
-                if result_content:
-                    yield f"data: {json.dumps({'type': 'thinking', 'content': result_content, 'session_id': session_id}, ensure_ascii=False)}\n\n"
-            elif step_result.get("type") == "final":
-                # 发送最终响应
+            elif step_type == "final":
                 final_response = step_result.get("content", "")
                 if final_response:
-                    # 逐字流式输出最终响应
                     for char in final_response:
                         yield f"data: {json.dumps({'type': 'response', 'content': char, 'session_id': session_id}, ensure_ascii=False)}\n\n"
                         await asyncio.sleep(0.02)
-        
-        # 添加到会话历史（在process_stream中已经保存）
-        # 不再重复调用process，避免重复执行
-        
-        # 发送结束标记
+
         yield f"data: {json.dumps({'type': 'done', 'session_id': session_id}, ensure_ascii=False)}\n\n"
-        logger.info(f"【主Agent流式响应】处理完成，会话ID: {session_id}")
-        
+
     except Exception as e:
         logger.error(f"【主Agent流式响应】处理请求失败: {e}", exc_info=True)
-        # 发送错误信息
-        error_message = f"错误: {str(e)}"
-        yield f"data: {json.dumps({'type': 'error', 'content': error_message, 'session_id': session_id}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'type': 'error', 'content': f'错误: {str(e)}', 'session_id': session_id}, ensure_ascii=False)}\n\n"
         yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
 
 
 async def get_main_agent_response(
         query: str,
         session_id: str,
-        user_id: str
+        user_id: str,
+        jwt_token: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    获取主Agent响应, 非流式响应
-    
-    Args:
-        query: 用户查询内容
-        session_id: 会话ID
-        user_id: 用户ID
-    
-    Returns:
-        包含响应结果的字典
+    获取主Agent响应, 非流式响应（通过 LangGraph 工作流编排）
     """
     try:
-        logger.info(f"【主Agent非流式响应】开始处理请求，用户ID: {user_id}, 会话ID: {session_id}, 查询: {query}")
+        logger.info(f"【主Agent非流式响应】开始处理请求，用户ID: {user_id}, 会话ID: {session_id}")
 
-        # 获取会话历史
-        history = await sm.session_manager.get_history(session_id, user_id)
-        logger.info(f"【主Agent非流式响应】获取会话历史成功，历史记录数: {len(history)}")
+        from app.agent.workflow import workflow
+        result = await workflow.run(query, session_id, user_id, jwt_token)
 
-        # 导入MainAgent
-        from app.agent.main_agent import MainAgent
-
-        # 创建主Agent实例
-        main_agent = MainAgent()
-
-        # 准备输入数据
-        input_data = {
-            "query": query,
-            "session_id": session_id,
-            "user_id": user_id,
-            "chat_history": history
-        }
-
-        # 调用主Agent处理请求
-        result = await main_agent.process(input_data)
-
-        # 获取最终响应
-        final_response = result.get("final_response", "抱歉，我无法理解您的请求。")
-        error = result.get("error", None)
-
-        # 添加到会话历史
-        await sm.session_manager.add_message(
-            session_id=session_id,
-            user_id=user_id,
-            user_message=query,
-            assistant_message=final_response
-        )
-        logger.info(f"【主Agent非流式响应】添加到会话历史成功")
-
-        # 返回结果
         return {
             "success": True,
-            "response": final_response,
-            "error": error,
-            "session_id": session_id
+            "response": result.get("response", "抱歉，我无法理解您的请求。"),
+            "error": result.get("error"),
+            "session_id": session_id,
         }
 
     except Exception as e:
         logger.error(f"【主Agent非流式响应】处理请求失败: {e}", exc_info=True)
-        error_message = f"错误: {str(e)}"
         return {
             "success": False,
-            "response": error_message,
+            "response": f"错误: {str(e)}",
             "error": str(e),
-            "session_id": session_id
+            "session_id": session_id,
         }
 
 
