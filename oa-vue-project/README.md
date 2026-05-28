@@ -95,6 +95,12 @@ npm run format
 yarn format
 ```
 
+## 开源协议
+
+本子项目基于 [MIT License](../LICENSE) 开源。
+
+Copyright (c) 2026 RMA-MUN
+
 ## 注意事项
 
 1. 请确保Node.js版本符合要求

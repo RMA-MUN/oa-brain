@@ -160,6 +160,12 @@ Authorization: Bearer <token>
 
 已配置CORS，允许前端3000端口访问。
 
+## 开源协议
+
+本子项目基于 [MIT License](../LICENSE) 开源。
+
+Copyright (c) 2026 RMA-MUN
+
 ## 常见问题
 
 **Q: 邮件发送失败？**

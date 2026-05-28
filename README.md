@@ -122,6 +122,12 @@ OAProject/
 - [FastAPIAgentService/README.md](FastAPIAgentService/README.md) - AI服务启动
 - [oa-vue-project/README.md](oa-vue-project/README.md) - 前端服务启动
 
+## 开源协议
+
+本项目基于 [MIT License](LICENSE) 开源。
+
+Copyright (c) 2026 RMA-MUN
+
 ## API接口
 
 | 服务 | 模块 | 端点 |

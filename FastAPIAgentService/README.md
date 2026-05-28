@@ -178,6 +178,12 @@ Django API  RAG    Redis            │
 | `/api/agent/memory/{session_id}` | DELETE | 删除会话记忆 |
 | `/api/health/` | GET | 健康检查 |
 
+## 开源协议
+
+本子项目基于 [MIT License](../LICENSE) 开源。
+
+Copyright (c) 2026 RMA-MUN
+
 ## 注意事项
 
 1. **首次启动**：Reranker模型会自动下载，需确保网络畅通
