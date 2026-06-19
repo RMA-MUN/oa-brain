@@ -289,42 +289,42 @@ async def create_attendance_record(
         return f"创建考勤记录失败: {str(e)}"
 
 
-@tool(description="更新考勤记录状态，需要提供JWT token、记录ID和更新信息（status, comment）")
+@tool(description="更新考勤记录状态（审批），需要提供JWT token、记录ID，以及status（2=已审批，3=已拒绝）和可选的approval_content（审批意见）")
 async def update_attendance_record(
     token: str,
     record_id: int,
-    status: str = None,
-    comment: str = None,
+    status: int = None,
+    approval_content: str = None,
     update_data: AttendanceUpdateRequest = None
 ) -> str:
-    """更新考勤记录状态工具"""
+    """更新考勤记录状态工具（审批）"""
     try:
         # 优先使用单独的参数，如果没有则使用update_data
         if status is None and update_data:
             status = update_data.status
-        if comment is None and update_data:
-            comment = update_data.comment
-        
+        if approval_content is None and update_data:
+            approval_content = update_data.approval_content
+
         # 验证必需参数
         if status is None:
             return "更新考勤记录失败：缺少必需参数status"
-        
-        # 验证status值
-        if status not in ["approved", "rejected"]:
-            return "更新考勤记录失败：status值必须为approved或rejected"
-        
+
+        # 验证status值（整数：2=已审批，3=已拒绝）
+        if status not in [2, 3]:
+            return "更新考勤记录失败：status值必须为2（已审批）或3（已拒绝）"
+
         request_data = {
             "status": status
         }
-        if comment:
-            request_data["comment"] = comment
-        
+        if approval_content:
+            request_data["approval_content"] = approval_content
+
         # 确保请求数据为严格JSON格式
         request_data = ensure_strict_json(request_data)
-        
+
         async with httpx.AsyncClient() as client:
             response = await client.put(
-                f"{DJANGO_API_BASE_URL}/Attendance/attendance/",
+                f"{DJANGO_API_BASE_URL}/Attendance/attendance/{record_id}/",
                 headers={"Authorization": f"Bearer {token}"},
                 json=request_data
             )
@@ -546,7 +546,7 @@ async def update_inform(
         
         async with httpx.AsyncClient() as client:
             response = await client.put(
-                f"{DJANGO_API_BASE_URL}/inform/inform/",
+                f"{DJANGO_API_BASE_URL}/inform/inform/{inform_id}/",
                 headers={"Authorization": f"Bearer {token}"},
                 json=request_data
             )
