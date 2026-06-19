@@ -129,9 +129,9 @@ class AttendanceCreateRequest(BaseModel):
 
 class AttendanceUpdateRequest(BaseModel):
     """考勤记录更新请求模型
-    API: /Attendance/attendance/ (PUT)
+    API: /Attendance/attendance/{pk}/ (PUT)
     """
-    status: int = Field(..., description="审批状态，1为审批中，2为已审批，3为已拒绝", pattern="^(approved|rejected)$")
+    status: int = Field(..., description="审批状态，2为已审批，3为已拒绝")
     approval_content: Optional[str] = Field(None, description="审批意见")
 
 
@@ -265,7 +265,8 @@ class InformCreateRequest(BaseModel):
     """
     title: str = Field(..., description="标题")
     content: str = Field(..., description="内容")
-    department_ids: Optional[List[int]] = Field(None, description="部门ID列表")
+    public: bool = Field(False, description="是否公开，department_ids包含[0]时自动设为True")
+    department_ids: Optional[List[int]] = Field(None, description="部门ID列表，包含[0]表示对所有部门可见")
 
 
 class InformUpdateRequest(BaseModel):
